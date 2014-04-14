@@ -4,3 +4,8 @@ deps
 *.beam
 *.plt
 erl_crash.dump
+ebin
+rel/esmpp34
+.idea
+esmpp34.iml
+.edts
