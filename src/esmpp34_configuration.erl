@@ -39,6 +39,36 @@
 
 
 %%--------------------------------------------------------------------
+%% Macro helpers
+%%--------------------------------------------------------------------
+
+
+
+-define(check_mandatory_field(Name, Record, Field),
+        erlang:apply(fun(#Name{Field = Value}) when Value /= undefined -> {ok, Field, Value};
+                        (_) -> {error, Field, []} end,
+                     [Record])).
+
+
+
+-define(get_failed_mandatory(List),
+        lists:filter(fun({ok, _, _}) -> false;
+                        ({error, _}) -> true end, List)).
+
+
+
+-define(check_subrecord(Name, Record, Field, Callback),
+        erlang:apply(fun(#Name{Field = V}) -> case Callback(V) of 
+						  [] -> [];
+						  Errors -> {error, Field, Errors}
+					      end;
+                        (_) -> []
+                     end,
+                     [Record])).
+
+
+
+%%--------------------------------------------------------------------
 %% @doc
 %% Checks, if the configuration is valid
 %% @end
@@ -47,7 +77,7 @@
 -type config_entry() :: {Key :: binary(), Value :: term()
                                                  | [config_entry]}.
 -spec(validate_configuration([config_entry()]) ->
-             ok |
+             {ParsedConfig :: #config{}, Errors :: [] | [{error, Field :: atom(), Error :: any() }]} |
              {error, Reason :: term()}).
 
 validate_configuration([]) ->
@@ -55,7 +85,8 @@ validate_configuration([]) ->
 
 validate_configuration(Config) when is_list(Config) ->
     ParsedConfig = parse_config(Config, #config{}),
-    ok.
+    Errors = check_config(ParsedConfig),
+    {ParsedConfig, Errors}.
 
 
 
@@ -166,8 +197,8 @@ parse_connection([{_UnknownOption, _} | RestOptions], #connection{} = Connection
 %%--------------------------------------------------------------------
 
 -spec(parse_host({Host :: binary(), Port :: 0..65535}) ->
-	     Ret :: {all, Port :: 0..65535}
-		  | {Host::string(), Port :: 0..65535}).
+             Ret :: {all, Port :: 0..65535}
+                  | {Host::string(), Port :: 0..65535}).
 
 parse_host({<<"all">>, Port}) when Port >= 0, Port =< 65535 ->
     {all, Port};
@@ -177,8 +208,63 @@ parse_host({Host, Port}) when is_binary(Host), Port >= 0, Port =< 65535 ->
 
 
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Checks, if all the mandatory fields in #config{} record is set
+%% @end
+%%--------------------------------------------------------------------
+
+-spec(check_config(Config :: #config{}) ->
+	     Errors :: [] 
+		       | [{error, Field :: atom(), Error :: any() }]).
+
+check_config(#config{} = Config) ->
+    ?get_failed_mandatory([?check_mandatory_field(config, Config, directions)]) ++
+	?check_subrecord(config, Config, directions, fun check_section_direction/1).
 
 
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Checks, if all the mandatory fields in #section_direction{} record is set
+%% @end
+%%--------------------------------------------------------------------
 
+-spec(check_section_direction(Section :: #section_direction{}) ->
+	     Errors :: []
+		     | [{error, Field :: atom(), Error :: any() }]).
+
+check_section_direction(#section_direction{} = Record) ->
+    ?get_failed_mandatory([?check_mandatory_field(section_direction, Record, id),
+                           ?check_mandatory_field(section_direction, Record, mode),
+			   ?check_mandatory_field(section_direction, Record, connections)]) ++ 
+	check_connection(Record#section_direction.connections, []).
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Checks, if all the mandatory fields in #connection{} record is set
+%% @end
+%%--------------------------------------------------------------------
+
+-spec(check_connection(ConnectionList :: undefined | [#connection{}], Accumulator :: [{error, Field :: atom(), Error :: any() }]) ->
+	     Errors :: [] 
+		     | [{error, Field :: atom(), Error :: any() }]).
+
+check_connection(undefined, _) ->
+    [];
+
+check_connection([], Accumulator) ->
+    lists:flatten(Accumulator);
+
+check_connection([#connection{} = Record | Rest], Accumulator) ->
+    Errors = ?get_failed_mandatory([?check_mandatory_field(connection, Record, type),
+				    ?check_mandatory_field(connection, Record, host),
+				    ?check_mandatory_field(connection, Record, login),
+				    ?check_mandatory_field(connection, Record, password)]),
+    check_connection(Rest, [Errors | Accumulator]).
 

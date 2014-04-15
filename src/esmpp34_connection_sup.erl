@@ -53,7 +53,7 @@
 %% @end
 %%--------------------------------------------------------------------
 -spec(start_link() ->
-	     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
+             {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
@@ -72,12 +72,12 @@ start_link() ->
 %% @end
 %%--------------------------------------------------------------------
 -spec(init(Args :: term()) ->
-	     {ok, {SupFlags :: {RestartStrategy :: supervisor:strategy(),
-				MaxR :: non_neg_integer(), MaxT :: non_neg_integer()},
-		   [ChildSpec :: supervisor:child_spec()]
-		  }} |
-	     ignore |
-	     {error, Reason :: term()}).
+             {ok, {SupFlags :: {RestartStrategy :: supervisor:strategy(),
+                                MaxR :: non_neg_integer(), MaxT :: non_neg_integer()},
+                   [ChildSpec :: supervisor:child_spec()]
+                  }} |
+             ignore |
+             {error, Reason :: term()}).
 init([]) ->
     RestartStrategy = one_for_one,
     MaxRestarts = 1000,
@@ -90,7 +90,7 @@ init([]) ->
     Type = worker,
 
     AChild = {'AName', {'AModule', start_link, []},
-	      Restart, Shutdown, Type, ['AModule']},
+              Restart, Shutdown, Type, ['AModule']},
 
     {ok, {SupFlags, [AChild]}}.
 
