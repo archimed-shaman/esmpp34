@@ -44,26 +44,29 @@
 
 
 %% TODO: add inet:address_family() = inet | inet6
--record(connection, { type                     :: server | client, %% server, client
-                      host                     :: host(),
-                      ip_options               :: list(),
-                      login                    :: string(),
-                      password                 :: string(),
-                      response_timeout = 10000 :: pos_integer(),
-                      el_interval      = 60000 :: pos_integer()
+-record(connection, { id                            :: non_neg_integer(),
+                      type                          :: server | client, %% server, client
+                      host                          :: host(),
+                      ip_options                    :: list(),
+                      login                         :: [{string(), string()}],
+                      response_timeout = 10000      :: pos_integer(),
+                      el_interval      = 60000      :: pos_integer(),
+                      in_bandwidth      = unlimited :: unlimited | non_neg_integer(),
+                      out_bandwidth     = unlimited :: unlimited | non_neg_integer()
                     }).
 
 
 
--record(section_direction, { id                         :: non_neg_integer(),
-                             mode         = transceiver :: bind_mode(), %% receiver, transmitter, transceiver
-                             load_sharing = false       :: boolean(),
-                             connections  = []          :: [#connection{}]
-                           })
+-record(direction, { id                         :: non_neg_integer(),
+                     mode         = transceiver :: bind_mode(), %% receiver, transmitter, transceiver
+                     load_sharing = false       :: boolean(),
+                     connections                :: [#connection{}]
+                   })
 
 
 .
--record(config, {directions = [#section_direction{}]}).
+-record(config, { directions = [#direction{}],
+                  connections = [#connection{}] }).
 
 
 

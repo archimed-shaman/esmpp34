@@ -36,8 +36,7 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/0,
-         start_config_holder/1]).
+-export([start_link/0]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -46,6 +45,8 @@
 -define(CHILD(I, Type), {I, {I, start_link, []}, permanent, 5000, Type, [I]}).
 -define (SERVER, ?MODULE).
 
+
+
 %% ===================================================================
 %% API functions
 %% ===================================================================
@@ -53,19 +54,7 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-%% TODO: make config holder with
-%% 1) CallBack
-%% 2) Pure signal intercommunication (fsm)
-%% 3) static configuration
-start_config_holder(CallBack) when is_function(CallBack) ->
-    ConfigHolder = {esmpp34_config_holder_cb,
-                    {esmpp34_config_holder_cb, start_link, [{callback, CallBack}]}, permanent, 5000, worker, [esmpp34_config_holder_cb]},
-    supervisor:start_child(?MODULE, ConfigHolder);
 
-start_config_holder(Pid) when is_pid(Pid) ->
-    ConfigHolder = {esmpp34_config_holder,
-                    {esmpp34_config_holder, start_link, [{pid, Pid}]}, permanent, 5000, worker, [esmpp34_config_holder]},
-    supervisor:start_child(?MODULE, ConfigHolder).
 
 %% ===================================================================
 %% Supervisor callbacks
