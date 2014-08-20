@@ -74,8 +74,8 @@
 %% @end
 %%--------------------------------------------------------------------
 
--type config_entry() :: {Key :: binary(), Value :: binary()
-                                                 | [config_entry]}.
+-type config_entry() :: {Key :: atom(), Value :: term()
+                                               | [config_entry]}.
 -spec(validate_configuration([config_entry()]) ->
              {ParsedConfig :: #config{}, Errors :: [] | [{error, Field :: atom(), Error :: any() }]} |
              {error, Reason :: term()}).
@@ -103,10 +103,10 @@ validate_configuration(Config) when is_list(Config) ->
 parse_config([], #config{} = Config) ->
     Config;
 
-parse_config([{<<"directions">>, Section} | RestSections], #config{} = Config) ->
+parse_config([{directions, Section} | RestSections], #config{} = Config) ->
     parse_config(RestSections, Config#config{directions = [parse_direction(Dir, #direction{}) || Dir <- Section]});
 
-parse_config([{<<"connections">>, Section} | RestSections], #config{} = Config) ->
+parse_config([{connections, Section} | RestSections], #config{} = Config) ->
     parse_config(RestSections, Config#config{connections = [parse_connection(Conn, #connection{}) || Conn <- Section]});
 
 parse_config([{_UnknownSection, _} | RestSections], #config{} = Config) ->
@@ -129,24 +129,20 @@ parse_config([{_UnknownSection, _} | RestSections], #config{} = Config) ->
 parse_direction([], #direction{} = Direction) ->
     Direction;
 
-parse_direction([{<<"id">>, Id} | RestOptions], #direction{} = Direction) ->
-    parse_direction(RestOptions, Direction#direction{id = binary_to_integer(Id)});
+parse_direction([{id, Id} | RestOptions], #direction{} = Direction) when is_number(Id) ->
+    parse_direction(RestOptions, Direction#direction{id = Id});
 
-parse_direction([{<<"mode">>, <<"transmitter">>} | RestOptions], #direction{} = Direction) ->
-    parse_direction(RestOptions, Direction#direction{mode = transmitter});
-parse_direction([{<<"mode">>, <<"receiver">>} | RestOptions], #direction{} = Direction) ->
-    parse_direction(RestOptions, Direction#direction{mode = receiver});
-parse_direction([{<<"mode">>, <<"transceiver">>} | RestOptions], #direction{} = Direction) ->
-    parse_direction(RestOptions, Direction#direction{mode = transceiver});
+parse_direction([{mode, Mode} | RestOptions], #direction{} = Direction) when Mode == transmitter;
+                                                                             Mode == receiver;
+                                                                             Mode == transceiver ->
+    parse_direction(RestOptions, Direction#direction{mode = Mode});
 
-parse_direction([{<<"loadsharing">>, <<"true">>} | RestOptions], #direction{} = Direction) ->
-    parse_direction(RestOptions, Direction#direction{load_sharing = true});
-parse_direction([{<<"loadsharing">>, <<"false">>} | RestOptions], #direction{} = Direction) ->
-    parse_direction(RestOptions, Direction#direction{load_sharing = false});
+parse_direction([{loadsharing, LoadSharing} | RestOptions], #direction{} = Direction) when is_boolean(LoadSharing) ->
+    parse_direction(RestOptions, Direction#direction{load_sharing = LoadSharing});
 
-parse_direction([{<<"connections">>, Connections} | RestOptions], #direction{} = Direction) when is_list(Connections) ->
+parse_direction([{connections, Connections} | RestOptions], #direction{} = Direction) when is_list(Connections) ->
     parse_direction(RestOptions,
-                    Direction#direction{connections = [binary_to_integer(ConnId) || ConnId <- Connections]});
+                    Direction#direction{connections = [parse_connection_param(Connection) || Connection <- Connections]});
 
 parse_direction([{_UnknownOption, _} | RestOptions], #direction{} = Direction) ->
     %% TODO: add warning
@@ -168,42 +164,54 @@ parse_direction([{_UnknownOption, _} | RestOptions], #direction{} = Direction) -
 parse_connection([], #connection{} = Connection) ->
     Connection;
 
-parse_connection([{<<"id">>, Id} | RestOptions], #connection{} = Connection) ->
-    parse_connection(RestOptions, Connection#connection{id = binary_to_integer(Id)});
+parse_connection([{id, Id} | RestOptions], #connection{} = Connection) when is_number(Id), Id > 0 ->
+    parse_connection(RestOptions, Connection#connection{id = Id});
 
-parse_connection([{<<"type">>, <<"server">>} | RestOptions], #connection{} = Connection) ->
-    parse_connection(RestOptions, Connection#connection{type = server});
-parse_connection([{<<"type">>, <<"client">>} | RestOptions], #connection{} = Connection) ->
-    parse_connection(RestOptions, Connection#connection{type = client});
+parse_connection([{type, Type} | RestOptions], #connection{} = Connection) when Type == server; Type == client ->
+    parse_connection(RestOptions, Connection#connection{type = Type});
 
-parse_connection([{<<"login">>, Login} | RestOptions], #connection{login = undefined} = Connection) when is_list(Login) ->
-    parse_connection(RestOptions, Connection#connection{login = parse_login(Login)});
-parse_connection([{<<"login">>, Login} | RestOptions], #connection{login = LoginList} = Connection) when is_list(Login) ->
-    parse_connection(RestOptions, Connection#connection{login = LoginList ++ parse_login(Login)});
+parse_connection([{response_timeout, ResponseTimeout} | RestOptions], #connection{} = Connection) when is_number(ResponseTimeout);
+                                                                                                       ResponseTimeout == infinity ->
+    parse_connection(RestOptions, Connection#connection{response_timeout = ResponseTimeout});
 
-parse_connection([{<<"response_timeout">>, ResponseTimeout} | RestOptions], #connection{} = Connection) ->
-    parse_connection(RestOptions, Connection#connection{response_timeout = binary_to_integer(ResponseTimeout)});
+parse_connection([{enquiry_link, EnquiryLinkInterval} | RestOptions], #connection{} = Connection) when is_number(EnquiryLinkInterval);
+                                                                                                       EnquiryLinkInterval == infinity ->
+    parse_connection(RestOptions, Connection#connection{el_interval = EnquiryLinkInterval});
 
-parse_connection([{<<"enquiry_link">>, EnquiryLinkInterval} | RestOptions], #connection{} = Connection) ->
-    parse_connection(RestOptions, Connection#connection{el_interval = binary_to_integer(EnquiryLinkInterval)});
-
-parse_connection([{<<"host">>, Host} | RestOptions], #connection{} = Connection) ->
+parse_connection([{host, Host} | RestOptions], #connection{} = Connection) ->
     parse_connection(RestOptions, Connection#connection{host = parse_host(Host)});
 
-parse_connection([{<<"in_bandwidth">>, <<"unlimited">>} | RestOptions], #connection{} = Connection) ->
-    parse_connection(RestOptions, Connection#connection{in_bandwidth = unlimited});
-parse_connection([{<<"in_bandwidth">>, InBandwidth} | RestOptions], #connection{} = Connection) ->
-    parse_connection(RestOptions, Connection#connection{in_bandwidth = binary_to_integer(InBandwidth)});
+parse_connection([{in_bandwidth, InBandwidth} | RestOptions], #connection{} = Connection) when is_number(InBandwidth);
+                                                                                               InBandwidth == infinity ->
+    parse_connection(RestOptions, Connection#connection{in_bandwidth = InBandwidth});
 
-parse_connection([{<<"out_bandwidth">>, <<"unlimited">>} | RestOptions], #connection{} = Connection) ->
-    parse_connection(RestOptions, Connection#connection{out_bandwidth = unlimited});
-parse_connection([{<<"out_bandwidth">>, OutBandwidth} | RestOptions], #connection{} = Connection) ->
-    parse_connection(RestOptions, Connection#connection{out_bandwidth = binary_to_integer(OutBandwidth)});
+parse_connection([{out_bandwidth, OutBandwidth} | RestOptions], #connection{} = Connection) when is_number(OutBandwidth);
+                                                                                                 OutBandwidth == infinity ->
+    parse_connection(RestOptions, Connection#connection{out_bandwidth = OutBandwidth});
 
 parse_connection([{_UnknownOption, _} | RestOptions], #connection{} = Connection) ->
     %% TODO: add warning
     parse_connection(RestOptions, Connection).
 
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Transforms the login information to the internal format
+%% @end
+%%--------------------------------------------------------------------
+
+-spec(parse_connection_param({Id :: non_neg_integer(), LoginInformation :: {Login :: string(), Password :: string()}
+                                                                         | [{Login :: string(), Password :: string()}]}) ->
+             Ret :: #connection_param{}).
+
+parse_connection_param({Id, LoginInformation}) when is_number(Id), is_list(LoginInformation) ->
+    Logins = [{Login, Password} || {Login, Password} <- LoginInformation, is_list(Login), is_list(Password)],
+    #connection_param{id = Id, login = Logins};
+
+parse_connection_param({Id, {Login, Password} = LoginInformation}) when is_number(Id), is_list(Login), is_list(Password) ->
+    #connection_param{id = Id, login = [LoginInformation]}.
 
 
 %%--------------------------------------------------------------------
@@ -217,37 +225,16 @@ parse_connection([{_UnknownOption, _} | RestOptions], #connection{} = Connection
              Ret :: {all, Port :: 0..65535}
                   | {Host::string(), Port :: 0..65535}).
 
-parse_host([<<"all">>, Port]) ->
-    {all, binary_to_integer(Port)};
+parse_host([all, Port]) when is_number(Port),
+                             Port >= 0, Port =< 65535 ->
+    {all, Port};
 
-parse_host([Host, Port]) when is_binary(Host) ->
-    {binary_to_list(Host), binary_to_integer(Port)}.
-
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Transforms the login entry to the internal format
-%% @end
-%%--------------------------------------------------------------------
-
-parse_login(List) ->
-    parse_login(List, []).
+parse_host([Host, Port]) when is_number(Port),
+                              Port >= 0, Port =< 65535,
+                              is_list(Host) ->
+    {Host, Port}.
 
 
--type login_list() :: [binary()].
--spec(parse_login(LoginList :: login_list() | [login_list()] | [],
-                  Accumulator :: [{string(), string()}]) ->
-             Ret :: [{Login::string(), Password :: string()}]).
-
-parse_login([], Acc) ->
-    lists:reverse(Acc);
-
-parse_login([[Login, Password] | Tail], Acc) ->
-    parse_login(Tail, [{binary_to_list(Login), binary_to_list(Password)} | Acc]);
-
-parse_login([Login, Password], _) when is_binary(Login) and is_binary(Password)->
-    [{binary_to_list(Login), binary_to_list(Password)}].
 
 %%--------------------------------------------------------------------
 %% @private
@@ -304,5 +291,4 @@ check_section(#direction{} = Record) ->
 check_section(#connection{} = Record) ->
     ?get_failed_mandatory([?check_mandatory_field(connection, Record, id),
                            ?check_mandatory_field(connection, Record, type),
-                           ?check_mandatory_field(connection, Record, host),
-                           ?check_mandatory_field(connection, Record, login)]).
+                           ?check_mandatory_field(connection, Record, host)]).

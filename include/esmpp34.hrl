@@ -41,6 +41,10 @@
                    | receiver
                    | transceiver.
 
+-type login() :: {string(), string()}.
+
+-type logins() :: [login()].
+
 
 
 %% TODO: add inet:address_family() = inet | inet6
@@ -48,7 +52,6 @@
                       type                          :: server | client, %% server, client
                       host                          :: host(),
                       ip_options                    :: list(),
-                      login                         :: [{string(), string()}],
                       response_timeout = 10000      :: pos_integer(),
                       el_interval      = 60000      :: pos_integer(),
                       in_bandwidth      = unlimited :: unlimited | non_neg_integer(),
@@ -57,10 +60,15 @@
 
 
 
+-record(connection_param, { id :: non_neg_integer(),
+                            login :: [logins()] }).
+
+
+
 -record(direction, { id                         :: non_neg_integer(),
                      mode         = transceiver :: bind_mode(), %% receiver, transmitter, transceiver
                      load_sharing = false       :: boolean(),
-                     connections                :: [#connection{}]
+                     connections                :: #connection_param{}
                    })
 
 
