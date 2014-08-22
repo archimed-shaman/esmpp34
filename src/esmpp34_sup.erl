@@ -68,6 +68,6 @@ init([]) ->
 
 
 start_manager(CallBack) when is_function(CallBack) ->
-  ManagerSpec = {esmpp34_manager,
-                  {esmpp34_manager, start_link, [CallBack]}, permanent, 3000, worker, [esmpp34_manager]},
+    ManagerSpec = {esmpp34_manager,
+                   {esmpp34_manager, start_link, [CallBack]}, permanent, 3000, worker, [esmpp34_manager]},
     supervisor:start_child(?MODULE, ManagerSpec).

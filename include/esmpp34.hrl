@@ -69,10 +69,10 @@
                      mode         = transceiver :: bind_mode(), %% receiver, transmitter, transceiver
                      load_sharing = false       :: boolean(),
                      connections                :: #connection_param{}
-                   })
+                   }).
 
 
-.
+
 -record(config, { directions = [#direction{}],
                   connections = [#connection{}] }).
 

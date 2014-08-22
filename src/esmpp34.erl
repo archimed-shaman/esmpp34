@@ -2,7 +2,7 @@
 %%% @author Alexander Morozov aka ~ArchimeD~
 %%% @copyright 2014, Alexander Morozov
 %%% @doc
-%%% The main supervisor
+%%% The main module
 %%% @end
 %%%
 %%% The MIT License (MIT)
@@ -36,6 +36,7 @@
 
 
 start(ConfigGetter) when is_function(ConfigGetter) ->
+    %% FIXME: match ok results
     application:start(esmpp34),
     esmpp34_sup:start_manager(ConfigGetter),
-    ok.
+    esmpp34_manager:run_config().

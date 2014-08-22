@@ -60,8 +60,7 @@
 
 
 
--record(pid_record, { type               :: direction | connection,
-                      id                 :: non_neg_integer(),
+-record(pid_record, { id                 :: non_neg_integer(),
                       monitor_ref = null :: reference() | null}).
 
 
@@ -136,15 +135,25 @@ register_direction(Id) ->
              {stop, Reason :: term()} | ignore).
 
 init(Args) ->
+    io:format("Starting manager... ~n"),
     CallBack = proplists:get_value(callback, Args),
-    case get_config(CallBack()) of
-        {ok, Config} ->
-            case run_config(#config{}, Config, #state{callback = CallBack, config = Config}) of
-                #state{} = State -> {ok, State};
-                {error, Reason} -> {stop, Reason}
-            end;
-        {error, Reason} -> {stop, Reason}
-    end.
+    {ok, #state{callback = CallBack}}.
+%%     io:format("Checking config... ~n"),
+%%     case get_config(CallBack()) of
+%%         {ok, Config} ->
+%%             io:format("Config check ok ~n"),
+%%             case run_config(#config{}, Config, #state{callback = CallBack, config = Config}) of
+%%                 #state{} = State ->
+%%                     io:format("Managr started~n"),
+%%                     {ok, State};
+%%                 {error, Reason} ->
+%%                     io:format("Managr error: ~p~n", [Reason]),
+%%                     {stop, Reason}
+%%             end;
+%%         {error, Reason} ->
+%%             io:format("Unable start manager: ~p~n", [Reason]),
+%%             {stop, Reason}
+%%     end.
 
 
 
@@ -166,21 +175,32 @@ init(Args) ->
              {stop, Reason :: term(), NewState :: #state{}}).
 
 handle_call(run_config, _From, #state{callback = Callback, config = OldConfig} = State) ->
+    io:format("Checking config... ~n"),
     case get_config(Callback()) of
         {ok, NewConfig} ->
+            io:format("Config check ok ~n"),
             case run_config(OldConfig, NewConfig, State) of
-                #state{} = NewState -> {reply, ok, NewState#state{config = NewConfig}};
-                {error, Reason} -> {reply, {error, Reason}, State}
+                #state{} = NewState ->
+                    io:format("Done ~n"),
+                    {reply, ok, NewState#state{config = NewConfig}};
+                {error, Reason} ->
+                    io:format("Error: ~p ~n", [Reason]),
+                    {reply, {error, Reason}, State};
+                Any ->
+                    io:format("Hujnya: ~p ~n", [Any]),
+                    {reply, {error, Any}, State}
             end;
         {error, Reason} -> {reply, {error, Reason}, State}
     end;
 
-handle_call({register_direction, DirId}, From, #state{direction_dict = DirDict, pid_dict = PidDict} = State) ->
+handle_call({register_direction, DirId}, {From, _}, #state{direction_dict = DirDict, pid_dict = PidDict} = State) ->
     case dict:find(DirId, DirDict) of
-        {ok, #dir_record{} = DirRec} ->
+        {ok, #dir_record{dir = #direction{connections = ConnectionList}} = DirRec} ->
             MonitorRef = erlang:monitor(process, From),
-            NewDirDict = dict:update(DirId, DirRec#dir_record{pid = From}, DirDict),
-            NewPidDic = dict:store(From, #pid_record{type = direction, id = DirId, monitor_ref = MonitorRef}, PidDict),
+            NewDirDict = dict:store(DirId, DirRec#dir_record{pid = From}, DirDict),
+            NewPidDic = dict:store(From, #pid_record{id = DirId, monitor_ref = MonitorRef}, PidDict),
+            %% try start connections
+            lists:foreach(fun(ConnParam) -> start_connection(ConnParam, State) end, ConnectionList),
             {reply, ok, State#state{direction_dict = NewDirDict,
                                     pid_dict = NewPidDic }};
         error ->
@@ -223,7 +243,7 @@ handle_cast(_Request, State) ->
 
 handle_info({'DOWN', MonitorRef, process, DownPid, _}, #state{pid_dict = PidDict, direction_dict = DirDict} = State)->
     case dict:find(DownPid, PidDict) of
-        {ok, #pid_record{type = direction, id = DirId, monitor_ref = MonitorRef}} ->
+        {ok, #pid_record{id = DirId, monitor_ref = MonitorRef}} ->
             NewDirDict = case dict:find(DirId, DirDict) of
                              {ok, #dir_record{connection_pid = ConnPids} = DirRec} ->
                                  %% if direction crashed, kill all dependent connections
@@ -287,8 +307,9 @@ code_change(_OldVsn, State, _Extra) ->
 run_config(#config{} = _OldConfig, #config{} = NewConfig, #state{} = State) ->
     %% TODO: diff config and run diff
     io:format("run config~n"),
-    lists:foldl(fun start_direction/2, State, NewConfig#config.directions),
-    ok.
+    NewState = lists:foldl(fun start_direction/2, State, NewConfig#config.directions),
+    io:format("config done~n"),
+    NewState.
 
 
 
@@ -296,12 +317,24 @@ get_config(RawConfig) ->
     case esmpp34_configuration:validate_configuration(RawConfig) of
         {error, _Reason} = Error -> Error;
         {#config{} = Config, []} -> {ok, Config};
-        {#config{}, Errors} -> {error, Errors}
+        {#config{}, Errors} -> {error, Errors};
+        Any -> {error, {unknown, Any}}
     end.
 
 
 start_direction(#direction{id = DirId} = Dir,
                 #state{direction_dict = DirDict} = CurrState) ->
     NewDirDict = dict:store(DirId, #dir_record{dir = Dir}, DirDict),
+    io:format("Starting direction #~p...~n", [DirId]),
     esmpp34_direction_sup:start_direction(Dir),
     CurrState#state{direction_dict = NewDirDict}.
+
+
+start_connection(#connection_param{id = Id},
+                 #state{config = Config}) ->
+    case lists:dropwhile(fun(#connection{id = ConnId}) -> ConnId /= Id end, Config#config.connections) of
+        [] ->
+            ok;
+        [Connection | _] ->
+            io:format("==> Starting connection ~p~n", [Connection])
+    end.

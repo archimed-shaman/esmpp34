@@ -98,6 +98,7 @@ start_link(#direction{} = Dir) ->
 init(Args) ->
     Direction = proplists:get_value(dir, Args),
     io:format("Direction #~p started~n", [Direction#direction.id]),
+    erlang:send_after(1, self(), register),
     {ok, #state{dir = Direction}}.
 
 
@@ -109,6 +110,7 @@ init(Args) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+
 -spec(handle_call(Request :: term(), From :: {pid(), Tag :: term()},
                   State :: #state{}) ->
              {reply, Reply :: term(), NewState :: #state{}} |
@@ -117,8 +119,11 @@ init(Args) ->
              {noreply, NewState :: #state{}, timeout() | hibernate} |
              {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
              {stop, Reason :: term(), NewState :: #state{}}).
+
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
+
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -127,12 +132,16 @@ handle_call(_Request, _From, State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+
 -spec(handle_cast(Request :: term(), State :: #state{}) ->
              {noreply, NewState :: #state{}} |
              {noreply, NewState :: #state{}, timeout() | hibernate} |
              {stop, Reason :: term(), NewState :: #state{}}).
+
 handle_cast(_Request, State) ->
     {noreply, State}.
+
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -144,12 +153,21 @@ handle_cast(_Request, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+
 -spec(handle_info(Info :: timeout() | term(), State :: #state{}) ->
              {noreply, NewState :: #state{}} |
              {noreply, NewState :: #state{}, timeout() | hibernate} |
              {stop, Reason :: term(), NewState :: #state{}}).
+
+handle_info(register, #state{dir = Direction} = State) ->
+    Res = esmpp34_manager:register_direction(Direction#direction.id),
+    io:format("Direction #~p: trying to register: ~p~n",[Direction#direction.id, Res]),
+    {noreply, State};
+
 handle_info(_Info, State) ->
     {noreply, State}.
+
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -162,10 +180,14 @@ handle_info(_Info, State) ->
 %% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
+
 -spec(terminate(Reason :: (normal | shutdown | {shutdown, term()} | term()),
                 State :: #state{}) -> term()).
+
 terminate(_Reason, _State) ->
     ok.
+
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -175,11 +197,15 @@ terminate(_Reason, _State) ->
 %% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
 %% @end
 %%--------------------------------------------------------------------
+
 -spec(code_change(OldVsn :: term() | {down, term()}, State :: #state{},
                   Extra :: term()) ->
              {ok, NewState :: #state{}} | {error, Reason :: term()}).
+
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+
 
 %%%===================================================================
 %%% Internal functions

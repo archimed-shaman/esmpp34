@@ -225,11 +225,11 @@ parse_connection_param({Id, {Login, Password} = LoginInformation}) when is_numbe
              Ret :: {all, Port :: 0..65535}
                   | {Host::string(), Port :: 0..65535}).
 
-parse_host([all, Port]) when is_number(Port),
+parse_host({all, Port}) when is_number(Port),
                              Port >= 0, Port =< 65535 ->
     {all, Port};
 
-parse_host([Host, Port]) when is_number(Port),
+parse_host({Host, Port}) when is_number(Port),
                               Port >= 0, Port =< 65535,
                               is_list(Host) ->
     {Host, Port}.
