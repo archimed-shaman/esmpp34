@@ -1,46 +1,32 @@
 %%%-------------------------------------------------------------------
-%%% @author Alexander Morozov aka ~ArchimeD~
-%%% @copyright 2014, Alexander Morozov
+%%% @author morozov
+%%% @copyright (C) 2014, <COMPANY>
 %%% @doc
-%%% The supervisor of all network connections
+%%%
 %%% @end
-%%%
-%%% The MIT License (MIT)
-%%%
-%%% Copyright (c) 2014 Alexander Morozov
-%%%
-%%% Permission is hereby granted, free of charge, to any person obtaining a copy
-%%% of this software and associated documentation files (the "Software"), to deal
-%%% in the Software without restriction, including without limitation the rights
-%%% to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-%%% copies of the Software, and to permit persons to whom the Software is
-%%% furnished to do so, subject to the following conditions:
-%%%
-%%% The above copyright notice and this permission notice shall be included in all
-%%% copies or substantial portions of the Software.
-%%%
-%%% THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-%%% IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-%%% FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-%%% AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-%%% LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-%%% OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-%%% SOFTWARE.
+%%% Created : 20. Авг. 2014 10:21
 %%%-------------------------------------------------------------------
-
--module(esmpp34_connection_sup).
--author("Alexander Morozov aka ~ArchimeD~").
-
+-module(esmpp34_direction_sup).
+-author("morozov").
 
 -behaviour(supervisor).
 
 %% API
--export([start_link/0]).
+-export([ start_link/0,
+          start_direction/1 ]).
 
 %% Supervisor callbacks
 -export([init/1]).
 
+
+
+-include("esmpp34.hrl").
+
+
+
 -define(SERVER, ?MODULE).
+
+
 
 %%%===================================================================
 %%% API functions
@@ -52,14 +38,20 @@
 %%
 %% @end
 %%--------------------------------------------------------------------
+
 -spec(start_link() ->
              {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
+
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+
+
 
 %%%===================================================================
 %%% Supervisor callbacks
 %%%===================================================================
+
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -71,6 +63,7 @@ start_link() ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+
 -spec(init(Args :: term()) ->
              {ok, {SupFlags :: {RestartStrategy :: supervisor:strategy(),
                                 MaxR :: non_neg_integer(), MaxT :: non_neg_integer()},
@@ -78,6 +71,7 @@ start_link() ->
                   }} |
              ignore |
              {error, Reason :: term()}).
+
 init([]) ->
     RestartStrategy = one_for_one,
     MaxRestarts = 1000,
@@ -85,15 +79,15 @@ init([]) ->
 
     SupFlags = {RestartStrategy, MaxRestarts, MaxSecondsBetweenRestarts},
 
-    Restart = permanent,
-    Shutdown = 2000,
-    Type = worker,
+    {ok, {SupFlags, []}}.
 
-    AChild = {'AName', {'AModule', start_link, []},
-              Restart, Shutdown, Type, ['AModule']},
 
-    {ok, {SupFlags, [AChild]}}.
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+start_direction(#direction{id = Id} = Dir) ->
+    DirSpec = {{esmpp34_direction, Id},
+               {esmpp34_direction, start_link, [Dir]}, permanent, 3000, worker, [esmpp34_direction]},
+    supervisor:start_child(?MODULE, DirSpec).

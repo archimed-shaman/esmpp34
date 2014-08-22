@@ -28,46 +28,14 @@
 %%% SOFTWARE.
 %%%-------------------------------------------------------------------
 
--module(esmpp34_sup).
+-module(esmpp34).
 -author("Alexander Morozov aka ~ArchimeD~").
 
-
-
--behaviour(supervisor).
-
 %% API
--export([ start_link/0,
-          start_manager/1 ]).
-
-%% Supervisor callbacks
--export([init/1]).
-
-%% Helper macro for declaring children of supervisor
--define(CHILD(I, Type), {I, {I, start_link, []}, permanent, 5000, Type, [I]}).
--define (SERVER, ?MODULE).
+-export([ start/1 ]).
 
 
-
-%% ===================================================================
-%% API functions
-%% ===================================================================
-
-start_link() ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
-
-
-
-%% ===================================================================
-%% Supervisor callbacks
-%% ===================================================================
-
-init([]) ->
-    DirectionSup = ?CHILD(esmpp34_direction_sup, supervisor),
-    {ok, { {one_for_all, 5, 10}, [DirectionSup]}}.
-
-
-
-start_manager(CallBack) when is_function(CallBack) ->
-  ManagerSpec = {esmpp34_manager,
-                  {esmpp34_manager, start_link, [CallBack]}, permanent, 3000, worker, [esmpp34_manager]},
-    supervisor:start_child(?MODULE, ManagerSpec).
+start(ConfigGetter) when is_function(ConfigGetter) ->
+    application:start(esmpp34),
+    esmpp34_sup:start_manager(ConfigGetter),
+    ok.
