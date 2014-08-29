@@ -68,7 +68,7 @@
 -record(direction, { id                         :: non_neg_integer(),
                      mode         = transceiver :: bind_mode(), %% receiver, transmitter, transceiver
                      load_sharing = false       :: boolean(),
-                     connections                :: #connection_param{}
+                     connections                :: [#connection_param{}]
                    }).
 
 

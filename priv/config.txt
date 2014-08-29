@@ -1,0 +1,44 @@
+Config = fun() ->
+[
+    {
+        connections,
+        [
+            [
+                {id, 1},
+                {type, server},
+                {host, {all, 12345}}
+            ],
+            [
+                {id, 2},
+                {type, client},
+                {host, {"192.168.0.1", 23456}}
+            ]
+        ]
+    },
+    {
+        directions,
+        [
+            [
+                {id, 1},
+                {mode, transceiver},
+                {connections, 
+                    [
+                        {1, {"l", "p"}},
+                        {2, {"l2", "p2"}}
+                    ]
+                }
+            ]
+        ]
+    }
+]
+end.
+esmpp34:start(Config).
+
+
+rr("../include/esmpp34.hrl").
+Connection = #connection{id = 2, type = server, host = {all, 12345}}.
+esmpp34_connection_sup:start_connection(Connection).
+
+
+esmpp34:start(Config).
+esmpp34_server:start_link(Connection).

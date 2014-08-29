@@ -336,5 +336,6 @@ start_connection(#connection_param{id = Id},
         [] ->
             ok;
         [Connection | _] ->
-            io:format("==> Starting connection ~p~n", [Connection])
+            io:format("==> Starting connection ~p~n", [Connection]),
+            esmpp34_connection_sup:start_connection(Connection)
     end.
