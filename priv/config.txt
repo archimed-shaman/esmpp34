@@ -24,7 +24,7 @@ Config = fun() ->
                 {mode, transceiver},
                 {connections, 
                     [
-                        {1, {"l", "p"}},
+                        {1, [{"l", "p"}, {"proxy", "test"}]},
                         {2, {"l2", "p2"}}
                     ]
                 }

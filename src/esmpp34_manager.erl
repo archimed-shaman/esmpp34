@@ -36,7 +36,8 @@
 %% API
 -export([ start_link/1,
           run_config/0,
-          register_direction/1 ]).
+          register_direction/1,
+          register_connection/4 ]).
 
 %% gen_server callbacks
 -export([ init/1,
@@ -65,9 +66,9 @@
 
 
 
--record(dir_record, { dir        :: #direction{},
+-record(dir_record, { dir                   :: #direction{},
                       connection_pid = [],
-                      pid = null :: pid() | null }).
+                      pid            = null :: pid() | null }).
 
 
 
@@ -116,6 +117,15 @@ run_config() ->
 
 register_direction(Id) ->
     gen_server:call(?SERVER, {register_direction, Id}).
+
+
+
+
+
+
+register_connection(ConnectionId, Mode, Login, Password) ->
+    gen_server:call(?SERVER, {register_connection, ConnectionId, Mode, Login, Password}).
+
 
 
 

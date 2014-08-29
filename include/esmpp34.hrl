@@ -61,7 +61,7 @@
 
 
 -record(connection_param, { id :: non_neg_integer(),
-                            login :: [logins()] }).
+                            login :: logins() }).
 
 
 
