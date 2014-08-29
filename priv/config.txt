@@ -1,3 +1,4 @@
+code:add_path("../deps/esmpp34raw/ebin").
 Config = fun() ->
 [
     {

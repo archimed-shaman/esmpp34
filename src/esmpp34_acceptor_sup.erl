@@ -2,7 +2,7 @@
 %%% @author Alexander Morozov aka ~ArchimeD~
 %%% @copyright 2014, Alexander Morozov
 %%% @doc
-%%% Connection supervisor
+%%% Acceptors supervisor
 %%% @end
 %%%
 %%% The MIT License (MIT)
@@ -28,14 +28,14 @@
 %%% SOFTWARE.
 %%%-------------------------------------------------------------------
 
--module(esmpp34_connection_sup).
+-module(esmpp34_acceptor_sup).
 -author("Alexander Morozov aka ~ArchimeD~").
 
 -behaviour(supervisor).
 
 %% API
 -export([ start_link/0,
-          start_connection/1 ]).
+          start_acceptor/3 ]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -43,8 +43,6 @@
 -include("esmpp34.hrl").
 
 -define(SERVER, ?MODULE).
-
-
 
 %%%===================================================================
 %%% API functions
@@ -92,7 +90,9 @@ init([]) ->
     RestartStrategy = one_for_one,
     MaxRestarts = 1000,
     MaxSecondsBetweenRestarts = 3600,
+
     SupFlags = {RestartStrategy, MaxRestarts, MaxSecondsBetweenRestarts},
+
     {ok, {SupFlags, []}}.
 
 
@@ -101,13 +101,8 @@ init([]) ->
 %%% Internal functions
 %%%===================================================================
 
-start_connection(#connection{type = server, id = Id} = Spec) ->
-    ConnSpec = {{esmpp34_server, Id},
-                {esmpp34_server, start_link, [Spec]}, transient, 3000, worker, [esmpp34_server]},
-    supervisor:start_child(?MODULE, ConnSpec);
 
-start_connection(#connection{type = client, id = Id} = Spec) ->
-    ok.
-%%     ConnSpec = {{esmpp34_server, Id},
-%%                 {esmpp34_server, start_link, [Spec]}, transient, 3000, worker, [esmpp34_server]},
-%%     supervisor:start_child(?MODULE, ConnSpec).
+start_acceptor(Id, #connection{} = Connection, Socket) ->
+    DirSpec = {{esmpp34_acceptor, Id},
+               {esmpp34_acceptor, start_link, [Id, Connection, Socket]}, temporary, 3000, worker, [esmpp34_acceptor]},
+    supervisor:start_child(?MODULE, DirSpec).

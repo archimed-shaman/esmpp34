@@ -64,7 +64,8 @@ start_link() ->
 init([]) ->
     DirectionSup = ?CHILD(esmpp34_direction_sup, supervisor),
     ConnectionSup = ?CHILD(esmpp34_connection_sup, supervisor),
-    {ok, { {one_for_all, 5, 10}, [DirectionSup, ConnectionSup]}}.
+    AcceptorSup = ?CHILD(esmpp34_acceptor_sup, supervisor),
+    {ok, { {one_for_all, 5, 10}, [DirectionSup, ConnectionSup, AcceptorSup]}}.
 
 
 

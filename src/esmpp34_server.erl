@@ -51,7 +51,7 @@
 -define(ACCEPT_INTERVAL, 1000).
 -define(ACCEPT_TIMEOUT, 100).
 
--record(state, {listener, connection, parser, parent_sup, connection_id = 0, timer}).
+-record(state, {listener, connection, connection_id = 0, timer}).
 
 %%%===================================================================
 %%% API
@@ -89,8 +89,7 @@ start_link(Arg) ->
 
 init(Args) ->
     Connection = proplists:get_value(connection, Args),
-    starter(Connection#connection.host, #state{connection = Connection,
-                                               parser = esmpp34raw}).
+    starter(Connection#connection.host, #state{connection = Connection}).
 
 
 
@@ -139,14 +138,12 @@ handle_cast(_Msg, State) ->
 
 handle_info(accept_if_any, #state{timer = OldTimer,
                                   listener = Socket,
-                                  parent_sup = Supervisor,
                                   connection_id = ConnectionId,
-                                  connection = Direction,
-                                  parser = Parser} = State) ->
+                                  connection = Connection} = State) ->
     erlang:cancel_timer(OldTimer),
-    LastConnectionId = accept_if_any(Socket, Supervisor, ConnectionId, Direction, Parser),
+    LastConnectionId = accept_if_any(Socket, ConnectionId, Connection),
     Timer = erlang:send_after(?ACCEPT_INTERVAL, self(), accept_if_any),
-    {noreply, State#state{timer = Timer, connection_id = LastConnectionId + 1}};
+    {noreply, State#state{timer = Timer, connection_id = LastConnectionId}};
 
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -183,7 +180,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 starter({all, Port}, #state{} = State) ->
     io:format("Starting at all interfaces on port ~p~n", [Port]),
-    Options = [{packet, raw}, {active, false}, {reuseaddr, true}],
+    Options = [binary, {packet, raw}, {active, false}, {reuseaddr, true}],
     case gen_tcp:listen(Port, Options) of
         {ok, Socket} ->
             Timer = erlang:send_after(?ACCEPT_INTERVAL, self(), accept_if_any),
@@ -197,7 +194,7 @@ starter ({Address, Port}, #state{} = State) ->
     case inet_parse:address(Address) of
         {ok, IpAddress} ->
             io:format("Starting at ~p:~p~n", [Address, Port]),
-            Options = [{ip, IpAddress}, {packet, raw}, {active, false}, {reuseaddr, true}],
+            Options = [binary, {ip, IpAddress}, {packet, raw}, {active, false}, {reuseaddr, true}],
             case gen_tcp:listen(Port, Options) of
                 {ok, Socket} ->
                     Timer = erlang:send_after(?ACCEPT_INTERVAL, self(), accept_if_any),
@@ -213,17 +210,17 @@ starter ({Address, Port}, #state{} = State) ->
     end.
 
 
-accept_if_any(Socket, Supervisor, ConnectionId, Direction, Parser) ->
+accept_if_any(Socket, ConnectionId, Connection) ->
     case gen_tcp:accept(Socket, ?ACCEPT_TIMEOUT) of
         {ok, ClientSocket} ->
-            {ok, Child} = esmpp34_server_connection_sup:start_direction(Supervisor, ConnectionId, Direction, ClientSocket, Parser),
+            {ok, Child} = esmpp34_acceptor_sup:start_acceptor(ConnectionId, Connection, ClientSocket),
             case  gen_tcp:controlling_process(ClientSocket, Child) of
                 ok ->
-                    ok;
-                {error, _} ->
+                    accept_if_any(Socket, ConnectionId + 1, Connection);
+                {error, Error} ->
+                    io:format("!!!!! UNABLE SET CONTROLLING PROCESS ~p: ~p~n", [Child, Error]),
                     ok %% TODO: stop server
-            end,
-            accept_if_any(Socket, Supervisor, ConnectionId + 1, Direction, Parser);
+            end;
         {error, timeout} ->
             ConnectionId;
         {error, Reason} ->
