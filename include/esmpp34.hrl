@@ -48,14 +48,14 @@
 
 
 %% TODO: add inet:address_family() = inet | inet6
--record(connection, { id                            :: non_neg_integer(),
-                      type                          :: server | client, %% server, client
-                      host                          :: host(),
-                      ip_options                    :: list(),
-                      response_timeout = 10000      :: pos_integer(),
-                      el_interval      = 60000      :: pos_integer(),
-                      in_bandwidth      = unlimited :: unlimited | non_neg_integer(),
-                      out_bandwidth     = unlimited :: unlimited | non_neg_integer()
+-record(connection, { id                           :: non_neg_integer(),
+                      type                         :: server | client, %% server, client
+                      host                         :: host(),
+                      ip_options                   :: list(),
+                      response_timeout = 10000     :: pos_integer(),
+                      el_interval      = 60000     :: pos_integer(),
+                      in_bandwidth     = unlimited :: unlimited | non_neg_integer(),
+                      out_bandwidth    = unlimited :: unlimited | non_neg_integer()
                     }).
 
 

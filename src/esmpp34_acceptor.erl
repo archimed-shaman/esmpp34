@@ -280,9 +280,11 @@ handle_timeout(Seq, Timers) ->
 
 
 
-proceed_unbound(#state{connection = #connection{el_interval = ElTimer} = Connection, socket = Socket} = State,
-                #pdu{sequence_number = Seq, body = #bind_transceiver{} = Packet}) ->
+proceed_unbound(#state{connection = #connection{id = ConnectionId, el_interval = ElTimer} = Connection, socket = Socket} = State,
+                #pdu{sequence_number = Seq, body = #bind_transceiver{password = Password, system_id = SystemId} = Packet}) ->
     io:format("===> TRANSCEIVER: ~p~n", [Packet]),
+    Result = esmpp34_manager:register_connection(ConnectionId, transceiver, SystemId, Password),
+    io:format("result of login: ~p~n", [Result]),
     {next_state, unbound, State};
 %%     case esmpp34_l_bind:bind_request(Direction, Packet) of
 %%         {ok, Code, Resp} ->

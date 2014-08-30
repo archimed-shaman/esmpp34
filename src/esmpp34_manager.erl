@@ -217,6 +217,46 @@ handle_call({register_direction, DirId}, {From, _}, #state{direction_dict = DirD
             {reply, {error, no_direction}, State}
     end;
 
+handle_call({register_connection, ConnectionId, Mode, Login, Password}, _From, #state{config = #config{directions = Directions}} = State) ->
+
+    %% firstly, filter all directions, that does not contain the specific connection id
+    case lists:dropwhile(fun(#direction{connections = Connections}) ->
+                                 not lists:any(fun(#connection_param{id = ConnId, login = Logins}) when ConnId == ConnectionId ->
+                                                       not proplists:is_defined(Login, Logins);
+                                                  (_) ->
+                                                       true
+                                               end, Connections)
+                         end, Directions) of
+        [FirstEntry = #direction{mode = DirMode, connections = Connections} | _] ->
+            %% some direction is found
+            %% check, if it has the appripriate mode
+            case check_mode(DirMode, Mode) of
+                true ->
+                    io:format("Possible directions for connection ~p: ~p~n", [ConnectionId, FirstEntry]),
+                    [#connection_param{id = DirId,
+                                       login = Logins} | _] = lists:dropwhile(fun(#connection_param{id = Id}) when Id == ConnectionId ->
+                                                                                      false;
+                                                                                 (_) ->
+                                                                                      true
+                                                                              end, Connections),
+                    UserPassword = proplists:get_value(Login, Logins),
+                    if
+                        Password == UserPassword -> {reply, {ok, DirId}, State};
+                        true -> {reply, {error, password}, State}
+                    end;
+                false ->
+                    io:format("Directions ~p requires the wrong state ~p~n", [ConnectionId, State]),
+                    {reply, {error, state}, State}
+            end;
+        [] ->
+            io:format("No directions found for connection ~p~n", [ConnectionId]),
+            {reply, {error, system_id}, State}
+    end;
+
+
+
+
+
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
@@ -349,3 +389,12 @@ start_connection(#connection_param{id = Id},
             io:format("==> Starting connection ~p~n", [Connection]),
             esmpp34_connection_sup:start_connection(Connection)
     end.
+
+
+
+
+
+check_mode(transceiver, transceiver) -> true;
+check_mode(transmitter, receiver) -> true;
+check_mode(receiver, transmitter) -> true;
+check_mode(_, _) -> false.
