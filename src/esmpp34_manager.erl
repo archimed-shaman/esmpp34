@@ -222,9 +222,9 @@ handle_call({register_connection, ConnectionId, Mode, Login, Password}, _From, #
     %% firstly, filter all directions, that does not contain the specific connection id
     case lists:dropwhile(fun(#direction{connections = Connections}) ->
                                  not lists:any(fun(#connection_param{id = ConnId, login = Logins}) when ConnId == ConnectionId ->
-                                                       not proplists:is_defined(Login, Logins);
+                                                       proplists:is_defined(Login, Logins);
                                                   (_) ->
-                                                       true
+                                                       false
                                                end, Connections)
                          end, Directions) of
         [FirstEntry = #direction{mode = DirMode, connections = Connections} | _] ->
@@ -375,8 +375,8 @@ get_config(RawConfig) ->
 start_direction(#direction{id = DirId} = Dir,
                 #state{direction_dict = DirDict} = CurrState) ->
     NewDirDict = dict:store(DirId, #dir_record{dir = Dir}, DirDict),
-    io:format("Starting direction #~p...~n", [DirId]),
-    esmpp34_direction_sup:start_direction(Dir),
+    Res = esmpp34_direction_sup:start_direction(Dir),
+    io:format("Starting direction #~p... ~p~n", [DirId, Res]),
     CurrState#state{direction_dict = NewDirDict}.
 
 

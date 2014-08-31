@@ -71,7 +71,7 @@
              {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 
 start_link(#direction{} = Dir) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [{dir, Dir}], []).
+    gen_server:start_link(?MODULE, [{dir, Dir}], []).
 
 
 
