@@ -20,7 +20,7 @@
 
 %% gen_fsm callbacks
 -export([ init/1,
-          unbound/2,
+          open/2,
           state_name/3,
           handle_event/3,
           handle_sync_event/4,
@@ -85,7 +85,7 @@ init(Args) ->
     Socket = proplists:get_value(socket, Args),
     io:format("Acceptor started with parameters: ~p~n", [Args]),
     inet:setopts(Socket, [{active, once}]),
-    {ok, unbound, #state{id = Id, connection = Connection, socket = Socket}, 1000}. %% FIXME: make 1000 as timeout macros or record field
+    {ok, open, #state{id = Id, connection = Connection, socket = Socket}, 1000}. %% FIXME: make 1000 as timeout macros or record field
 
 
 
@@ -102,15 +102,15 @@ init(Args) ->
 %%--------------------------------------------------------------------
 
 
-unbound(timeout, #state{socket = Socket} = State) ->
+open(timeout, #state{socket = Socket} = State) ->
     io:format("session init timeout~n"),
     %% FIXME: correct stop
     gen_tcp:close(Socket),
     {stop, normal, State};
 
-unbound({data, [Head | _], []}, #state{socket = Socket} = State) ->
+open({data, [Head | _], []}, #state{socket = Socket} = State) ->
     inet:setopts(Socket, [{active, once}]),
-    proceed_unbound(State, Head).
+    proceed_open(State, Head).
 
 
 
@@ -280,12 +280,12 @@ handle_timeout(Seq, Timers) ->
 
 
 
-proceed_unbound(#state{connection = #connection{id = ConnectionId, el_interval = ElTimer} = Connection, socket = Socket} = State,
+proceed_open(#state{connection = #connection{id = ConnectionId, el_interval = ElTimer} = Connection, socket = Socket} = State,
                 #pdu{sequence_number = Seq, body = #bind_transceiver{password = Password, system_id = SystemId} = Packet}) ->
     io:format("===> TRANSCEIVER: ~p~n", [Packet]),
     Result = esmpp34_manager:register_connection(ConnectionId, transceiver, SystemId, Password),
     io:format("result of login: ~p~n", [Result]),
-    {next_state, unbound, State};
+    {next_state, open, State};
 %%     case esmpp34_l_bind:bind_request(Direction, Packet) of
 %%         {ok, Code, Resp} ->
 %%             gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
@@ -295,16 +295,16 @@ proceed_unbound(#state{connection = #connection{id = ConnectionId, el_interval =
 %%     {stop, normal, State} %% FIXME: do something
 %%     end;
 
-proceed_unbound(#state{connection = #connection{} = Connection, socket = Socket} = State,
+proceed_open(#state{connection = #connection{} = Connection, socket = Socket} = State,
                 #pdu{sequence_number = Seq, body = #bind_transmitter{} = Packet}) ->
     io:format("===> TRANSMITTER: ~p~n", [Packet]),
-    {next_state, unbound, State};
+    {next_state, open, State};
 
-proceed_unbound(#state{connection = #connection{} = Connection, socket = Socket} = State,
+proceed_open(#state{connection = #connection{} = Connection, socket = Socket} = State,
                 #pdu{sequence_number = Seq, body = #bind_receiver{} = Packet}) ->
     io:format("===> RECEIVER: ~p~n", [Packet]),
-    {next_state, unbound, State};
+    {next_state, open, State};
 
-proceed_unbound(#state{} = State, A) ->
+proceed_open(#state{} = State, A) ->
     io:format("error received unknown packet ~p~n", [A]),
-    {next_state, unbound, State}.
+    {next_state, open, State}.
