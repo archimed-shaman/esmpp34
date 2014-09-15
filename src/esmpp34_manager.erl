@@ -185,39 +185,39 @@ init(Args) ->
              {stop, Reason :: term(), NewState :: #state{}}).
 
 handle_call(run_config, _From, #state{callback = Callback, config = OldConfig} = State) ->
-    {reply, {error, error}, State};
-%%     io:format("Checking config... ~n"),
-%%     case get_config(Callback()) of
-%%         {ok, NewConfig} ->
-%%             io:format("Config check ok ~n"),
-%%             case run_config(OldConfig, NewConfig, State) of
-%%                 #state{} = NewState ->
-%%                     io:format("Done ~n"),
-%%                     {reply, ok, NewState#state{config = NewConfig}};
-%%                 {error, Reason} ->
-%%                     io:format("Error: ~p ~n", [Reason]),
-%%                     {reply, {error, Reason}, State};
-%%                 Any ->
-%%                     io:format("Hujnya: ~p ~n", [Any]),
-%%                     {reply, {error, Any}, State}
-%%             end;
-%%     {error, Reason} -> {reply, {error, Reason}, State}
-%%     end;
+    %%     {reply, {error, error}, State};
+    io:format("Checking config... ~n"),
+    case get_config(Callback()) of
+        {ok, NewConfig} ->
+            io:format("Config check ok ~n"),
+            case run_config(OldConfig, NewConfig, State) of
+                #state{} = NewState ->
+                    io:format("Done ~n"),
+                    {reply, ok, NewState#state{config = NewConfig}};
+                {error, Reason} ->
+                    io:format("Error: ~p ~n", [Reason]),
+                    {reply, {error, Reason}, State};
+                Any ->
+                    io:format("Hujnya: ~p ~n", [Any]),
+                    {reply, {error, Any}, State}
+            end;
+        {error, Reason} -> {reply, {error, Reason}, State}
+    end;
 
 handle_call({register_direction, DirId}, {From, _}, #state{direction_dict = DirDict, pid_dict = PidDict} = State) ->
-    {reply, {error, no_direction}, State};
-%%     case dict:find(DirId, DirDict) of
-%%         {ok, #dir_record{dir = #smpp_entity{connections = ConnectionList}} = DirRec} ->
-%%             MonitorRef = erlang:monitor(process, From),
-%%             NewDirDict = dict:store(DirId, DirRec#dir_record{pid = From}, DirDict),
-%%             NewPidDic = dict:store(From, #pid_record{id = DirId, monitor_ref = MonitorRef}, PidDict),
-%%             %% try start connections
-%%             lists:foreach(fun(ConnParam) -> start_connection(ConnParam, State) end, ConnectionList),
-%%             {reply, ok, State#state{direction_dict = NewDirDict,
-%%                                     pid_dict = NewPidDic }};
-%%         error ->
-%%             {reply, {error, no_direction}, State}
-%%     end;
+    %%     {reply, {error, no_direction}, State};
+    case dict:find(DirId, DirDict) of
+        {ok, #dir_record{dir = Entity} = DirRec} ->
+            MonitorRef = erlang:monitor(process, From),
+            NewDirDict = dict:store(DirId, DirRec#dir_record{pid = From}, DirDict),
+            NewPidDic = dict:store(From, #pid_record{id = DirId, monitor_ref = MonitorRef}, PidDict),
+            %% try start connections
+            start_connections(Entity),
+            {reply, ok, State#state{direction_dict = NewDirDict,
+                                    pid_dict = NewPidDic }};
+        error ->
+            {reply, {error, no_direction}, State}
+    end;
 
 %% handle_call({register_connection, ConnectionId, Mode, Login, Password}, _From, #state{config = #config{directions = Directions}} = State) ->
 %%     %% firstly, filter all directions, that does not contain the specific connection id
@@ -355,31 +355,71 @@ code_change(_OldVsn, State, _Extra) ->
 
 
 
-%% run_config(#config{} = _OldConfig, #config{} = NewConfig, #state{} = State) ->
-%%     %% TODO: diff config and run diff
-%%     io:format("run config~n"),
-%%     NewState = lists:foldl(fun start_direction/2, State, NewConfig#config.directions),
-%%     io:format("config done~n"),
-%%     NewState.
-%%
-%%
-%%
-%% get_config(RawConfig) ->
-%%     case esmpp34_configuration:validate_configuration(RawConfig) of
-%%         {error, _Reason} = Error -> Error;
-%%         {#config{} = Config, []} -> {ok, Config};
-%%         {#config{}, Errors} -> {error, Errors};
-%%         Any -> {error, {unknown, Any}}
-%%     end.
-%%
-%%
-%% start_direction(#smpp_entity{id = DirId} = Dir,
-%%                 #state{direction_dict = DirDict} = CurrState) ->
-%%     NewDirDict = dict:store(DirId, #dir_record{dir = Dir}, DirDict),
-%%     Res = esmpp34_direction_sup:start_direction(Dir),
-%%     io:format("Starting direction #~p... ~p~n", [DirId, Res]),
-%%     CurrState#state{direction_dict = NewDirDict}.
-%%
+run_config(_OldConfig, [_|_] = NewConfig, #state{} = State) ->
+    %% TODO: diff config and run diff
+    io:format("run config~n"),
+    NewState = lists:foldl(fun start_direction/2, State, NewConfig),
+    io:format("config done~n"),
+    NewState.
+
+
+get_config(RawConfig) ->
+    case esmpp34_configuration:validate_configuration(RawConfig) of
+        {error, _Reason} = Error -> Error;
+        {[_|_] = Config, []} -> {ok, Config};
+        {_Config, Errors} -> {error, Errors};
+        Any -> {error, {unknown, Any}}
+    end.
+
+
+start_direction(#smpp_entity{id = DirId} = Dir,
+                #state{direction_dict = DirDict} = CurrState) ->
+    NewDirDict = dict:store(DirId, #dir_record{dir = Dir}, DirDict),
+    Res = esmpp34_direction_sup:start_direction(Dir),
+    io:format("Starting direction #~p... ~p~n", [DirId, Res]),
+    CurrState#state{direction_dict = NewDirDict}.
+
+
+
+
+start_connections(#smpp_entity{type = esme,
+                               allowed_modes = Modes,
+                               id = _Id,
+                               host = Host,
+                               port = Port,
+                               outbind = Outbind} = Entity) ->
+    lists:foreach(fun(_) -> esmpp34_connection_sup:start_connection(client, Host, Port, Entity) end, Modes),
+    start_outbind(server, Outbind, Entity),
+    ok;
+
+start_connections(#smpp_entity{type = smsc,
+                               allowed_modes = Modes,
+                               id = _Id,
+                               host = Host,
+                               port = Port,
+                               outbind = Outbind} = Entity) ->
+    lists:foreach(fun(_) -> esmpp34_connection_sup:start_connection(server, Host, Port, Entity) end, Modes),
+    start_outbind(client, Outbind, Entity),
+    ok.
+
+
+%%         start_connections(Id, Type = smsc, Modes, Host, Port, Outbind = #outbind_field{host = OutbindHost,
+%%                                                                                        port = OutbindPort,
+%%                                                                                        system_id = OutbindSystemId,
+%%                                                                                        password = OutbindPassword}) ->
+%%                                                            ok.
+
+
+start_outbind(Mode,  #outbind_field{host = OutbindHost,
+                                    port = OutbindPort}, #smpp_entity{} = Entity) when Mode == server; Mode == client ->
+    esmpp34_connection_sup:start_connection(Mode, OutbindHost, OutbindPort, Entity);
+
+start_outbind(Mode, _, #smpp_entity{}) when Mode == server; Mode == client ->
+    ok.
+
+
+
+
 %%
 %% start_connection(#connection_param{id = Id},
 %%                  #state{config = Config}) ->

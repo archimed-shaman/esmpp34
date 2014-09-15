@@ -77,14 +77,14 @@
 -type config_entry() :: {Key :: atom(), Value :: term()
                                                | [config_entry]}.
 -spec(validate_configuration([config_entry()]) ->
-             {ParsedConfig :: #config{}, Errors :: [] | [{error, Field :: atom(), Error :: any() }]} |
+             {ParsedConfig :: [#smpp_entity{}], Errors :: [] | [{error, Field :: atom(), Error :: any() }]} |
              {error, Reason :: term()}).
 
 validate_configuration([]) ->
     {error, empty_configuration};
 
 validate_configuration(Config) when is_list(Config) ->
-    ParsedConfig = parse_config(Config, #config{}),
+    ParsedConfig = parse_config(Config, []),
     Errors = check_config(ParsedConfig),
     {ParsedConfig, Errors}.
 
@@ -124,14 +124,28 @@ parse_entity([{port, Port} | Tail], #smpp_entity{} = Entity) ->
     parse_entity(Tail, Entity#smpp_entity{port = Port});
 parse_entity([{allowed_modes, AllowedModes} | Tail], #smpp_entity{} = Entity) ->
     parse_entity(Tail, Entity#smpp_entity{allowed_modes = [X || X <- AllowedModes, X == tx, X == rx, X == trx]});
-parse_entity([{port, Port} | Tail], #smpp_entity{} = Entity) ->
-    parse_entity(Tail, Entity#smpp_entity{port = Port});
+parse_entity([{outbind, Outbind} | Tail], #smpp_entity{} = Entity) ->
+    parse_entity(Tail, Entity#smpp_entity{outbind = parse_outbind(Outbind)});
 parse_entity([_ | Tail], #smpp_entity{} = Entity) ->
     %% TODO: warning for unknown field
     parse_entity(Tail, Entity#smpp_entity{}).
 
 
 
+
+parse_outbind(Data) ->
+    parse_outbind(Data, #outbind_field{}).
+
+parse_outbind([], #outbind_field{} = Outbind) ->
+  Outbind;
+parse_outbind([{system_id, SystemId} | Tail], #outbind_field{} = Outbind) ->
+    parse_outbind(Tail, Outbind#outbind_field{system_id = SystemId});
+parse_outbind([{password, Password} | Tail], #outbind_field{} = Outbind) ->
+    parse_outbind(Tail, Outbind#outbind_field{password = Password});
+parse_outbind([{host, Host} | Tail], #outbind_field{} = Outbind) ->
+    parse_outbind(Tail, Outbind#outbind_field{host = Host});
+parse_outbind([{port, Port} | Tail], #outbind_field{} = Outbind) ->
+  parse_outbind(Tail, Outbind#outbind_field{port = Port}).
 
 
 %%--------------------------------------------------------------------
@@ -141,16 +155,17 @@ parse_entity([_ | Tail], #smpp_entity{} = Entity) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec(check_config(Config :: #config{}) ->
+-spec(check_config(Config :: [#smpp_entity{}]) ->
              Errors :: []
                      | [{error, Field :: atom(), Error :: any() }]).
 
-check_config(#config{} = Config) ->
-    E1 = ?get_failed_mandatory([?check_mandatory_field(config, Config, connections)]),
-    E2 = ?get_failed_mandatory([?check_mandatory_field(config, Config, directions)]),
-    E3 = ?check_subrecord(config, Config, directions, fun check_section_list/1),
-    E4 = ?check_subrecord(config, Config, connections, fun check_section_list/1),
-    E1 ++ E2 ++ E3 ++ E4.
+check_config([_|_] = Config) ->
+    [].
+%%     E1 = ?get_failed_mandatory([?check_mandatory_field(config, Config, connections)]),
+%%     E2 = ?get_failed_mandatory([?check_mandatory_field(config, Config, directions)]),
+%%     E3 = ?check_subrecord(config, Config, directions, fun check_section_list/1),
+%%     E4 = ?check_subrecord(config, Config, connections, fun check_section_list/1),
+%%     E1 ++ E2 ++ E3 ++ E4.
 
 
 %%--------------------------------------------------------------------
@@ -160,14 +175,14 @@ check_config(#config{} = Config) ->
 %% @end
 %%--------------------------------------------------------------------
 
-check_section_list(List) when is_list(List) ->
-    check_section_list(List, []).
-
-check_section_list([], Acc) ->
-    Acc;
-
-check_section_list([Section | Tail], Acc) ->
-    check_section_list(Tail, Acc ++ check_section(Section)).
+%% check_section_list(List) when is_list(List) ->
+%%     check_section_list(List, []).
+%%
+%% check_section_list([], Acc) ->
+%%     Acc;
+%%
+%% check_section_list([Section | Tail], Acc) ->
+%%     check_section_list(Tail, Acc ++ check_section(Section)).
 
 
 %%--------------------------------------------------------------------
@@ -177,16 +192,16 @@ check_section_list([Section | Tail], Acc) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec(check_section(Section :: #direction{} | #connection{}) ->
-             Errors :: []
-                     | [{error, Field :: atom(), Error :: any() }]).
-
-check_section(#direction{} = Record) ->
-    ?get_failed_mandatory([?check_mandatory_field(direction, Record, id),
-                           ?check_mandatory_field(direction, Record, mode),
-                           ?check_mandatory_field(direction, Record, connections)]);
-
-check_section(#connection{} = Record) ->
-    ?get_failed_mandatory([?check_mandatory_field(connection, Record, id),
-                           ?check_mandatory_field(connection, Record, type),
-                           ?check_mandatory_field(connection, Record, host)]).
+%% -spec(check_section(Section :: #smpp_entity{} | #smpp_entity{}) ->
+%%              Errors :: []
+%%                      | [{error, Field :: atom(), Error :: any() }]).
+%%
+%% check_section(#smpp_entity{} = Record) ->
+%%     ?get_failed_mandatory([?check_mandatory_field(direction, Record, id),
+%%                            ?check_mandatory_field(direction, Record, mode),
+%%                            ?check_mandatory_field(direction, Record, connections)]);
+%%
+%% check_section(#smpp_entity{} = Record) ->
+%%     ?get_failed_mandatory([?check_mandatory_field(connection, Record, id),
+%%                            ?check_mandatory_field(connection, Record, type),
+%%                            ?check_mandatory_field(connection, Record, host)]).

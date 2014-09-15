@@ -1,4 +1,48 @@
 code:add_path("../deps/esmpp34raw/ebin").
+
+
+
+Config = fun() ->
+[
+    [
+        {id, 0},
+        {type, esme},
+        {system_id, "login"},
+        {password, "passsword"},
+        {host, "192.168.0.1"},
+        {port, 12345},
+        {allowed_modes, [tx, rx]},
+        {outbind, [
+                    {system_id, "ologin"},
+                    {password, "opasssword"},
+                    {host, all},
+                    {port, 12346}
+                  ]
+        }
+    ],
+    [
+        {id, 1},
+        {type, smsc},
+        {system_id, "login"},
+        {password, "passsword"},
+        {host, "localhost"},
+        {port, 54321},
+        {allowed_modes, [trx]},
+        {outbind, [
+                    {system_id, "ologin1"},
+                    {password, "opasssword1"},
+                    {host, "192.168.1.1"},
+                    {port, 54320}
+                  ]
+        }
+    ]
+]
+end.
+esmpp34:start(Config).
+
+
+
+
 Config = fun() ->
 [
     {

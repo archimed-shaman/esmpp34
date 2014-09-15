@@ -109,7 +109,7 @@ init([]) ->
 %%% Internal functions
 %%%===================================================================
 
-start_direction(#direction{id = Id} = Dir) ->
+start_direction(#smpp_entity{id = Id} = Dir) ->
     DirSpec = {{esmpp34_direction, Id},
                {esmpp34_direction, start_link, [Dir]}, transient, 3000, worker, [esmpp34_direction]},
     supervisor:start_child(?MODULE, DirSpec).

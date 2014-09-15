@@ -35,7 +35,7 @@
 
 %% API
 -export([ start_link/0,
-          start_connection/1 ]).
+          start_connection/4 ]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -101,13 +101,22 @@ init([]) ->
 %%% Internal functions
 %%%===================================================================
 
-start_connection(#smpp_entity{type = server, id = Id} = Spec) ->
+
+start_connection(server, Host, Port, #smpp_entity{id = Id} = Entity) ->
     ConnSpec = {{esmpp34_server, Id},
-                {esmpp34_server, start_link, [Spec]}, transient, 3000, worker, [esmpp34_server]},
+                {esmpp34_server, start_link, [Entity]}, transient, 3000, worker, [esmpp34_server]},
     supervisor:start_child(?MODULE, ConnSpec);
 
-start_connection(#smpp_entity{type = client, id = Id} = Spec) ->
+start_connection(client, Host, Port, #smpp_entity{id = Id} = Entity) ->
     ok.
+
+%% start_connection(#smpp_entity{type = server, id = Id} = Spec) ->
+%%     ConnSpec = {{esmpp34_server, Id},
+%%                 {esmpp34_server, start_link, [Spec]}, transient, 3000, worker, [esmpp34_server]},
+%%     supervisor:start_child(?MODULE, ConnSpec);
+%%
+%% start_connection(#smpp_entity{type = client, id = Id} = Spec) ->
+%%     ok.
 %%     ConnSpec = {{esmpp34_server, Id},
 %%                 {esmpp34_server, start_link, [Spec]}, transient, 3000, worker, [esmpp34_server]},
 %%     supervisor:start_child(?MODULE, ConnSpec).

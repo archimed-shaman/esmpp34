@@ -42,17 +42,18 @@
 -type modes() :: [mode()].
 
 
--record(outbind, { host      :: inet:ip_address() | all,
-                   port      :: inet:port_number(),
-                   system_id :: string(),
-                   password  :: string() }).
+-record(outbind_field, { host      :: inet:ip_address() | all,
+                         port      :: inet:port_number(),
+                         system_id :: string(),
+                         password  :: string() }).
 
--record(smpp_entity, { id                 :: non_neg_integer(),
-                       type               :: entity_type(),
-                       host               :: inet:ip_address() | all,
-                       port               :: inet:port_number(),
-                       system_id          :: string(),
-                       password           :: string(),
-                       allowed_modes = [] :: modes(),
-                       outbind            :: #outbind{} }).
+-record(smpp_entity, { id                  :: non_neg_integer(),
+                       type                :: entity_type(),
+                       host                :: inet:ip_address() | all,
+                       port                :: inet:port_number(),
+                       system_id           :: string(),
+                       password            :: string(),
+                       allowed_modes = []  :: modes(),
+                       outbind             :: #outbind_field{},
+                       el_interval = 60000 :: non_neg_integer() }).
 -endif.

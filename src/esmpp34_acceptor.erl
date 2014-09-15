@@ -52,7 +52,7 @@
 %% @end
 %%--------------------------------------------------------------------
 
--spec(start_link(Id :: non_neg_integer(), Connection :: #connection{}, Socket :: gen_tcp:socket()) ->
+-spec(start_link(Id :: non_neg_integer(), Connection :: #smpp_entity{}, Socket :: gen_tcp:socket()) ->
              {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 
 start_link(Id, Connection, Socket) ->
@@ -280,7 +280,7 @@ handle_timeout(Seq, Timers) ->
 
 
 
-proceed_open(#state{connection = #connection{id = ConnectionId, el_interval = ElTimer} = Connection, socket = Socket} = State,
+proceed_open(#state{connection = #smpp_entity{id = ConnectionId, el_interval = ElTimer} = Connection, socket = Socket} = State,
                 #pdu{sequence_number = Seq, body = #bind_transceiver{password = Password, system_id = SystemId} = Packet}) ->
     io:format("===> TRANSCEIVER: ~p~n", [Packet]),
     Result = esmpp34_manager:register_connection(ConnectionId, transceiver, SystemId, Password),
@@ -295,12 +295,12 @@ proceed_open(#state{connection = #connection{id = ConnectionId, el_interval = El
 %%     {stop, normal, State} %% FIXME: do something
 %%     end;
 
-proceed_open(#state{connection = #connection{} = Connection, socket = Socket} = State,
+proceed_open(#state{connection = #smpp_entity{} = Connection, socket = Socket} = State,
                 #pdu{sequence_number = Seq, body = #bind_transmitter{} = Packet}) ->
     io:format("===> TRANSMITTER: ~p~n", [Packet]),
     {next_state, open, State};
 
-proceed_open(#state{connection = #connection{} = Connection, socket = Socket} = State,
+proceed_open(#state{connection = #smpp_entity{} = Connection, socket = Socket} = State,
                 #pdu{sequence_number = Seq, body = #bind_receiver{} = Packet}) ->
     io:format("===> RECEIVER: ~p~n", [Packet]),
     {next_state, open, State};
