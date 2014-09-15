@@ -89,7 +89,7 @@ start_link(Arg) ->
 
 init(Args) ->
     Connection = proplists:get_value(connection, Args),
-    starter(Connection#connection.host, #state{connection = Connection}).
+    starter(Connection#smpp_entity.host, #state{connection = Connection}).
 
 
 

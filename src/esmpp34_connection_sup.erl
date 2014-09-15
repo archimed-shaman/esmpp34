@@ -101,12 +101,12 @@ init([]) ->
 %%% Internal functions
 %%%===================================================================
 
-start_connection(#connection{type = server, id = Id} = Spec) ->
+start_connection(#smpp_entity{type = server, id = Id} = Spec) ->
     ConnSpec = {{esmpp34_server, Id},
                 {esmpp34_server, start_link, [Spec]}, transient, 3000, worker, [esmpp34_server]},
     supervisor:start_child(?MODULE, ConnSpec);
 
-start_connection(#connection{type = client, id = Id} = Spec) ->
+start_connection(#smpp_entity{type = client, id = Id} = Spec) ->
     ok.
 %%     ConnSpec = {{esmpp34_server, Id},
 %%                 {esmpp34_server, start_link, [Spec]}, transient, 3000, worker, [esmpp34_server]},

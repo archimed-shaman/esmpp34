@@ -52,7 +52,9 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, { dir }).
+-record(state, { dir :: #smpp_entity{},
+                 tx :: pid(),
+                 rx :: pid() }).
 
 
 
@@ -63,14 +65,13 @@
 %%--------------------------------------------------------------------
 %% @doc
 %% Starts the server
-%%
 %% @end
 %%--------------------------------------------------------------------
 
--spec(start_link(#direction{}) ->
+-spec(start_link(#smpp_entity{}) ->
              {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 
-start_link(#direction{} = Dir) ->
+start_link(#smpp_entity{} = Dir) ->
     gen_server:start_link(?MODULE, [{dir, Dir}], []).
 
 
@@ -97,7 +98,7 @@ start_link(#direction{} = Dir) ->
 
 init(Args) ->
     Direction = proplists:get_value(dir, Args),
-    io:format("Direction #~p started~n", [Direction#direction.id]),
+    io:format("Direction #~p started~n", [Direction#smpp_entity.id]),
     erlang:send_after(1, self(), register),
     {ok, #state{dir = Direction}}.
 
@@ -160,8 +161,8 @@ handle_cast(_Request, State) ->
              {stop, Reason :: term(), NewState :: #state{}}).
 
 handle_info(register, #state{dir = Direction} = State) ->
-    Res = esmpp34_manager:register_direction(Direction#direction.id),
-    io:format("Direction #~p: trying to register: ~p~n",[Direction#direction.id, Res]),
+    Res = esmpp34_manager:register_direction(Direction#smpp_entity.id),
+    io:format("Direction #~p: trying to register: ~p~n",[Direction#smpp_entity.id, Res]),
     {noreply, State};
 
 handle_info(_Info, State) ->

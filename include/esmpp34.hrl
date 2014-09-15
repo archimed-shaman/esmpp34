@@ -33,49 +33,26 @@
 -define(esmpp34_hrl, true).
 -author("Alexander Morozov aka ~ArchimeD~").
 
+-type entity_type() :: esme
+                     | smsc.
 
--type host() :: {all, Port :: inet:port_number()}
-              | {Host :: inet:ip_address(), Port :: inet:port_number()}.
-
--type bind_mode() :: transmitter
-                   | receiver
-                   | transceiver.
-
--type login() :: {string(), string()}.
-
--type logins() :: [login()].
+-type mode() :: tx
+              | rx
+              | trx.
+-type modes() :: [mode()].
 
 
+-record(outbind, { host      :: inet:ip_address() | all,
+                   port      :: inet:port_number(),
+                   system_id :: string(),
+                   password  :: string() }).
 
-%% TODO: add inet:address_family() = inet | inet6
--record(connection, { id                           :: non_neg_integer(),
-                      type                         :: server | client, %% server, client
-                      host                         :: host(),
-                      ip_options                   :: list(),
-                      response_timeout = 10000     :: pos_integer(),
-                      el_interval      = 60000     :: pos_integer(),
-                      in_bandwidth     = unlimited :: unlimited | non_neg_integer(),
-                      out_bandwidth    = unlimited :: unlimited | non_neg_integer()
-                    }).
-
-
-
--record(connection_param, { id :: non_neg_integer(),
-                            login :: logins() }).
-
-
-
--record(direction, { id                         :: non_neg_integer(),
-                     mode         = transceiver :: bind_mode(), %% receiver, transmitter, transceiver
-                     load_sharing = false       :: boolean(),
-                     connections                :: [#connection_param{}]
-                   }).
-
-
-
--record(config, { directions = [#direction{}],
-                  connections = [#connection{}] }).
-
-
-
+-record(smpp_entity, { id                 :: non_neg_integer(),
+                       type               :: entity_type(),
+                       host               :: inet:ip_address() | all,
+                       port               :: inet:port_number(),
+                       system_id          :: string(),
+                       password           :: string(),
+                       allowed_modes = [] :: modes(),
+                       outbind            :: #outbind{} }).
 -endif.

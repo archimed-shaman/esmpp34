@@ -55,7 +55,7 @@
 
 
 -record(state, { callback,
-                 config         = #config{},
+                 config         = [],
                  pid_dict       = dict:new(),
                  direction_dict = dict:new() }).
 
@@ -66,7 +66,7 @@
 
 
 
--record(dir_record, { dir                   :: #direction{},
+-record(dir_record, { dir                   :: #smpp_entity{},
                       connection_pid = [],
                       pid            = null :: pid() | null }).
 
@@ -185,73 +185,74 @@ init(Args) ->
              {stop, Reason :: term(), NewState :: #state{}}).
 
 handle_call(run_config, _From, #state{callback = Callback, config = OldConfig} = State) ->
-    io:format("Checking config... ~n"),
-    case get_config(Callback()) of
-        {ok, NewConfig} ->
-            io:format("Config check ok ~n"),
-            case run_config(OldConfig, NewConfig, State) of
-                #state{} = NewState ->
-                    io:format("Done ~n"),
-                    {reply, ok, NewState#state{config = NewConfig}};
-                {error, Reason} ->
-                    io:format("Error: ~p ~n", [Reason]),
-                    {reply, {error, Reason}, State};
-                Any ->
-                    io:format("Hujnya: ~p ~n", [Any]),
-                    {reply, {error, Any}, State}
-            end;
-        {error, Reason} -> {reply, {error, Reason}, State}
-    end;
+    {reply, {error, error}, State};
+%%     io:format("Checking config... ~n"),
+%%     case get_config(Callback()) of
+%%         {ok, NewConfig} ->
+%%             io:format("Config check ok ~n"),
+%%             case run_config(OldConfig, NewConfig, State) of
+%%                 #state{} = NewState ->
+%%                     io:format("Done ~n"),
+%%                     {reply, ok, NewState#state{config = NewConfig}};
+%%                 {error, Reason} ->
+%%                     io:format("Error: ~p ~n", [Reason]),
+%%                     {reply, {error, Reason}, State};
+%%                 Any ->
+%%                     io:format("Hujnya: ~p ~n", [Any]),
+%%                     {reply, {error, Any}, State}
+%%             end;
+%%     {error, Reason} -> {reply, {error, Reason}, State}
+%%     end;
 
 handle_call({register_direction, DirId}, {From, _}, #state{direction_dict = DirDict, pid_dict = PidDict} = State) ->
-    case dict:find(DirId, DirDict) of
-        {ok, #dir_record{dir = #direction{connections = ConnectionList}} = DirRec} ->
-            MonitorRef = erlang:monitor(process, From),
-            NewDirDict = dict:store(DirId, DirRec#dir_record{pid = From}, DirDict),
-            NewPidDic = dict:store(From, #pid_record{id = DirId, monitor_ref = MonitorRef}, PidDict),
-            %% try start connections
-            lists:foreach(fun(ConnParam) -> start_connection(ConnParam, State) end, ConnectionList),
-            {reply, ok, State#state{direction_dict = NewDirDict,
-                                    pid_dict = NewPidDic }};
-        error ->
-            {reply, {error, no_direction}, State}
-    end;
+    {reply, {error, no_direction}, State};
+%%     case dict:find(DirId, DirDict) of
+%%         {ok, #dir_record{dir = #smpp_entity{connections = ConnectionList}} = DirRec} ->
+%%             MonitorRef = erlang:monitor(process, From),
+%%             NewDirDict = dict:store(DirId, DirRec#dir_record{pid = From}, DirDict),
+%%             NewPidDic = dict:store(From, #pid_record{id = DirId, monitor_ref = MonitorRef}, PidDict),
+%%             %% try start connections
+%%             lists:foreach(fun(ConnParam) -> start_connection(ConnParam, State) end, ConnectionList),
+%%             {reply, ok, State#state{direction_dict = NewDirDict,
+%%                                     pid_dict = NewPidDic }};
+%%         error ->
+%%             {reply, {error, no_direction}, State}
+%%     end;
 
-handle_call({register_connection, ConnectionId, Mode, Login, Password}, _From, #state{config = #config{directions = Directions}} = State) ->
-
-    %% firstly, filter all directions, that does not contain the specific connection id
-    case lists:dropwhile(fun(#direction{connections = Connections}) ->
-                                 not lists:any(fun(#connection_param{id = ConnId, login = Logins}) when ConnId == ConnectionId ->
-                                                       proplists:is_defined(Login, Logins);
-                                                  (_) ->
-                                                       false
-                                               end, Connections)
-                         end, Directions) of
-        [FirstEntry = #direction{mode = DirMode, connections = Connections} | _] ->
-            %% some direction is found
-            %% check, if it has the appripriate mode
-            case check_mode(DirMode, Mode) of
-                true ->
-                    io:format("Possible directions for connection ~p: ~p~n", [ConnectionId, FirstEntry]),
-                    [#connection_param{id = DirId,
-                                       login = Logins} | _] = lists:dropwhile(fun(#connection_param{id = Id}) when Id == ConnectionId ->
-                                                                                      false;
-                                                                                 (_) ->
-                                                                                      true
-                                                                              end, Connections),
-                    UserPassword = proplists:get_value(Login, Logins),
-                    if
-                        Password == UserPassword -> {reply, {ok, DirId}, State};
-                        true -> {reply, {error, password}, State}
-                    end;
-                false ->
-                    io:format("Directions ~p requires the wrong state ~p~n", [ConnectionId, State]),
-                    {reply, {error, state}, State}
-            end;
-        [] ->
-            io:format("No directions found for connection ~p~n", [ConnectionId]),
-            {reply, {error, system_id}, State}
-    end;
+%% handle_call({register_connection, ConnectionId, Mode, Login, Password}, _From, #state{config = #config{directions = Directions}} = State) ->
+%%     %% firstly, filter all directions, that does not contain the specific connection id
+%%     case lists:dropwhile(fun(#smpp_entity{connections = Connections}) ->
+%%                                  not lists:any(fun(#connection_param{id = ConnId, login = Logins}) when ConnId == ConnectionId ->
+%%                                                        proplists:is_defined(Login, Logins);
+%%                                                   (_) ->
+%%                                                        false
+%%                                                end, Connections)
+%%                          end, Directions) of
+%%         [FirstEntry = #smpp_entity{mode = DirMode, connections = Connections} | _] ->
+%%             %% some direction is found
+%%             %% check, if it has the appripriate mode
+%%             case check_mode(DirMode, Mode) of
+%%                 true ->
+%%                     io:format("Possible directions for connection ~p: ~p~n", [ConnectionId, FirstEntry]),
+%%                     [#connection_param{id = DirId,
+%%                                        login = Logins} | _] = lists:dropwhile(fun(#connection_param{id = Id}) when Id == ConnectionId ->
+%%                                                                                       false;
+%%                                                                                  (_) ->
+%%                                                                                       true
+%%                                                                               end, Connections),
+%%                     UserPassword = proplists:get_value(Login, Logins),
+%%                     if
+%%                         Password == UserPassword -> {reply, {ok, DirId}, State};
+%%                         true -> {reply, {error, password}, State}
+%%                     end;
+%%                 false ->
+%%                     io:format("Directions ~p requires the wrong state ~p~n", [ConnectionId, State]),
+%%                     {reply, {error, state}, State}
+%%             end;
+%%         [] ->
+%%             io:format("No directions found for connection ~p~n", [ConnectionId]),
+%%             {reply, {error, system_id}, State}
+%%     end;
 
 
 
@@ -354,41 +355,41 @@ code_change(_OldVsn, State, _Extra) ->
 
 
 
-run_config(#config{} = _OldConfig, #config{} = NewConfig, #state{} = State) ->
-    %% TODO: diff config and run diff
-    io:format("run config~n"),
-    NewState = lists:foldl(fun start_direction/2, State, NewConfig#config.directions),
-    io:format("config done~n"),
-    NewState.
-
-
-
-get_config(RawConfig) ->
-    case esmpp34_configuration:validate_configuration(RawConfig) of
-        {error, _Reason} = Error -> Error;
-        {#config{} = Config, []} -> {ok, Config};
-        {#config{}, Errors} -> {error, Errors};
-        Any -> {error, {unknown, Any}}
-    end.
-
-
-start_direction(#direction{id = DirId} = Dir,
-                #state{direction_dict = DirDict} = CurrState) ->
-    NewDirDict = dict:store(DirId, #dir_record{dir = Dir}, DirDict),
-    Res = esmpp34_direction_sup:start_direction(Dir),
-    io:format("Starting direction #~p... ~p~n", [DirId, Res]),
-    CurrState#state{direction_dict = NewDirDict}.
-
-
-start_connection(#connection_param{id = Id},
-                 #state{config = Config}) ->
-    case lists:dropwhile(fun(#connection{id = ConnId}) -> ConnId /= Id end, Config#config.connections) of
-        [] ->
-            ok;
-        [Connection | _] ->
-            io:format("==> Starting connection ~p~n", [Connection]),
-            esmpp34_connection_sup:start_connection(Connection)
-    end.
+%% run_config(#config{} = _OldConfig, #config{} = NewConfig, #state{} = State) ->
+%%     %% TODO: diff config and run diff
+%%     io:format("run config~n"),
+%%     NewState = lists:foldl(fun start_direction/2, State, NewConfig#config.directions),
+%%     io:format("config done~n"),
+%%     NewState.
+%%
+%%
+%%
+%% get_config(RawConfig) ->
+%%     case esmpp34_configuration:validate_configuration(RawConfig) of
+%%         {error, _Reason} = Error -> Error;
+%%         {#config{} = Config, []} -> {ok, Config};
+%%         {#config{}, Errors} -> {error, Errors};
+%%         Any -> {error, {unknown, Any}}
+%%     end.
+%%
+%%
+%% start_direction(#smpp_entity{id = DirId} = Dir,
+%%                 #state{direction_dict = DirDict} = CurrState) ->
+%%     NewDirDict = dict:store(DirId, #dir_record{dir = Dir}, DirDict),
+%%     Res = esmpp34_direction_sup:start_direction(Dir),
+%%     io:format("Starting direction #~p... ~p~n", [DirId, Res]),
+%%     CurrState#state{direction_dict = NewDirDict}.
+%%
+%%
+%% start_connection(#connection_param{id = Id},
+%%                  #state{config = Config}) ->
+%%     case lists:dropwhile(fun(#connection{id = ConnId}) -> ConnId /= Id end, Config#config.connections) of
+%%         [] ->
+%%             ok;
+%%         [Connection | _] ->
+%%             io:format("==> Starting connection ~p~n", [Connection]),
+%%             esmpp34_connection_sup:start_connection(Connection)
+%%     end.
 
 
 
