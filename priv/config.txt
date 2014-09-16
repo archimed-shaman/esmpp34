@@ -9,6 +9,7 @@ Config = fun() ->
         {type, smsc},
         {system_id, "proxy"},
         {password, "test"},
+        {host, all},
         {port, 12345},
         {allowed_modes, [tx, rx]},
         {outbind, [

@@ -353,7 +353,7 @@ start_connections(#smpp_entity{type = esme,
                                host = Host,
                                port = Port,
                                outbind = Outbind} = Entity) ->
-    lists:foreach(fun(_) -> esmpp34_connection_sup:start_connection(client, Host, Port, Entity) end, Modes),
+    lists:foreach(fun(Mode) -> esmpp34_connection_sup:start_connection(client, Host, Port, Entity, Mode) end, Modes),
     start_outbind(server, Outbind, Entity),
     ok;
 
@@ -363,14 +363,16 @@ start_connections(#smpp_entity{type = smsc,
                                host = Host,
                                port = Port,
                                outbind = Outbind} = Entity) ->
-    esmpp34_connection_sup:start_connection(server, Host, Port, Entity), %% one listener for all modes
+    esmpp34_connection_sup:start_connection(server, Host, Port, Entity, all), %% one listener for all modes
     start_outbind(client, Outbind, Entity), %% FIXME: open client outbind connection only on demand
     ok.
 
 
-start_outbind(Mode,  #outbind_field{host = OutbindHost,
-                                    port = OutbindPort}, #smpp_entity{} = Entity) when Mode == server; Mode == client ->
-    esmpp34_connection_sup:start_connection(Mode, OutbindHost, OutbindPort, Entity);
+start_outbind(Mode, #outbind_field{host = OutbindHost, port = OutbindPort}, #smpp_entity{} = Entity) when Mode == client ->
+    esmpp34_connection_sup:start_connection(Mode, OutbindHost, OutbindPort, Entity, tx);
+
+start_outbind(Mode, #outbind_field{host = OutbindHost, port = OutbindPort}, #smpp_entity{} = Entity) when Mode == server ->
+    esmpp34_connection_sup:start_connection(Mode, OutbindHost, OutbindPort, Entity, rx);
 
 start_outbind(Mode, _, #smpp_entity{}) when Mode == server; Mode == client ->
     ok.

@@ -92,7 +92,7 @@ init(Args) ->
     Host = proplists:get_value(host, Args),
     Port = proplists:get_value(port, Args),
     io:format("Listening on ~p:~p~n", [Host,Port]),
-    starter({Host, Port}, #state{host = Host, port =Port, connection = Connection}).
+    starter({Host, Port}, #state{host = Host, port = Port, connection = Connection}).
 
 
 
@@ -188,9 +188,9 @@ starter({all, Port}, #state{} = State) ->
         {ok, Socket} ->
             Timer = erlang:send_after(?ACCEPT_INTERVAL, self(), accept_if_any),
             {ok, State#state{timer = Timer, listener = Socket}};
-        {error, Reason} = Error->
+        {error, Reason} ->
             io:format("TCP Listener error start: ~p~n", [Reason]),
-            Error
+            {stop, {tcp_error, Reason}}
     end;
 
 starter ({Address, Port}, #state{} = State) ->
@@ -202,9 +202,9 @@ starter ({Address, Port}, #state{} = State) ->
                 {ok, Socket} ->
                     Timer = erlang:send_after(?ACCEPT_INTERVAL, self(), accept_if_any),
                     {ok, State#state{timer = Timer, listener = Socket}};
-                {error, Reason} = Error->
+                {error, Reason}->
                     io:format("TCP Listener error start: ~p~n", [Reason]),
-                    Error
+                    {stop, {tcp_error, Reason}}
             end;
         _ ->
             %% FIXME: maybe insecure

@@ -4,41 +4,29 @@
 %%% @doc
 %%%
 %%% @end
-%%% Created : 29. Авг. 2014 13:39
+%%% Created : 16. Сент. 2014 18:35
 %%%-------------------------------------------------------------------
--module(esmpp34_acceptor).
+-module(esmpp34_client).
 -author("morozov").
-
--include("esmpp34.hrl").
--include_lib("esmpp34raw/include/esmpp34raw_types.hrl").
--include_lib("esmpp34raw/include/esmpp34raw_constants.hrl").
 
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/3]).
+-export([start_link/4]).
 
 %% gen_fsm callbacks
--export([ init/1,
-          open/2,
-          state_name/3,
-          handle_event/3,
-          handle_sync_event/4,
-          handle_info/3,
-          terminate/3,
-          code_change/4 ]).
+-export([init/1,
+         state_name/2,
+         state_name/3,
+         handle_event/3,
+         handle_sync_event/4,
+         handle_info/3,
+         terminate/3,
+         code_change/4]).
 
 -define(SERVER, ?MODULE).
 
--record(state, { id,
-                 socket,
-                 el_timer,
-                 connection,
-                 response_timers = dict:new(),
-                 data = <<>>,
-                 dir_pid}).
-
-
+-record(state, {timer, socket, host, port, connection}).
 
 %%%===================================================================
 %%% API
@@ -53,12 +41,8 @@
 %% @end
 %%--------------------------------------------------------------------
 
--spec(start_link(Id :: non_neg_integer(), Connection :: #smpp_entity{}, Socket :: gen_tcp:socket()) ->
-             {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
-
-start_link(Id, Connection, Socket) ->
-    gen_fsm:start_link(?MODULE, [{id, Id}, {connection, Connection}, {socket, Socket}], []).
-
+start_link(Host, Port, Entity, Mode) ->
+    gen_fsm:start_link(?MODULE, [{host, Host}, {port, Port}, {connection, Entity}, {mode, Mode}], []).
 
 
 %%%===================================================================
@@ -74,20 +58,16 @@ start_link(Id, Connection, Socket) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-
 -spec(init(Args :: term()) ->
              {ok, StateName :: atom(), StateData :: #state{}} |
              {ok, StateName :: atom(), StateData :: #state{}, timeout() | hibernate} |
              {stop, Reason :: term()} | ignore).
-
 init(Args) ->
-    Id = proplists:get_value(id, Args),
     Connection = proplists:get_value(connection, Args),
-    Socket = proplists:get_value(socket, Args),
-    io:format("Acceptor started with parameters: ~p~n", [Args]),
-    inet:setopts(Socket, [{active, once}]),
-    {ok, open, #state{id = Id, connection = Connection, socket = Socket}, 1000}. %% FIXME: make 1000 as timeout macros or record field
-
+    Host = proplists:get_value(host, Args),
+    Port = proplists:get_value(port, Args),
+    io:format("Connecting to ~p:~p~n", [Host,Port]),
+    starter(Host, Port, #state{host = Host, port = Port, connection = Connection}).
 
 
 %%--------------------------------------------------------------------
@@ -102,18 +82,8 @@ init(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 
-
-open(timeout, #state{socket = Socket} = State) ->
-    io:format("session init timeout~n"),
-    %% FIXME: correct stop
-    gen_tcp:close(Socket),
-    {stop, normal, State};
-
-open({data, [Head | _], []}, #state{socket = Socket} = State) ->
-    inet:setopts(Socket, [{active, once}]),
-    proceed_open(State, Head).
-
-
+state_name(_Event, State) ->
+    {next_state, state_name, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -126,7 +96,6 @@ open({data, [Head | _], []}, #state{socket = Socket} = State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-
 -spec(state_name(Event :: term(), From :: {pid(), term()},
                  State :: #state{}) ->
              {next_state, NextStateName :: atom(), NextState :: #state{}} |
@@ -138,12 +107,9 @@ open({data, [Head | _], []}, #state{socket = Socket} = State) ->
              {stop, Reason :: normal | term(), NewState :: #state{}} |
              {stop, Reason :: normal | term(), Reply :: term(),
               NewState :: #state{}}).
-
 state_name(_Event, _From, State) ->
     Reply = ok,
     {reply, Reply, state_name, State}.
-
-
 
 %%--------------------------------------------------------------------
 %% @private
@@ -154,18 +120,14 @@ state_name(_Event, _From, State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-
 -spec(handle_event(Event :: term(), StateName :: atom(),
                    StateData :: #state{}) ->
              {next_state, NextStateName :: atom(), NewStateData :: #state{}} |
              {next_state, NextStateName :: atom(), NewStateData :: #state{},
               timeout() | hibernate} |
              {stop, Reason :: term(), NewStateData :: #state{}}).
-
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
-
-
 
 %%--------------------------------------------------------------------
 %% @private
@@ -176,7 +138,6 @@ handle_event(_Event, StateName, State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-
 -spec(handle_sync_event(Event :: term(), From :: {pid(), Tag :: term()},
                         StateName :: atom(), StateData :: term()) ->
              {reply, Reply :: term(), NextStateName :: atom(), NewStateData :: term()} |
@@ -187,12 +148,9 @@ handle_event(_Event, StateName, State) ->
               timeout() | hibernate} |
              {stop, Reason :: term(), Reply :: term(), NewStateData :: term()} |
              {stop, Reason :: term(), NewStateData :: term()}).
-
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
-
-
 
 %%--------------------------------------------------------------------
 %% @private
@@ -203,41 +161,14 @@ handle_sync_event(_Event, _From, StateName, State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-
 -spec(handle_info(Info :: term(), StateName :: atom(),
                   StateData :: term()) ->
              {next_state, NextStateName :: atom(), NewStateData :: term()} |
              {next_state, NextStateName :: atom(), NewStateData :: term(),
               timeout() | hibernate} |
              {stop, Reason :: normal | term(), NewStateData :: term()}).
-
-handle_info({tcp, _Socket,  Bin}, StateName, #state{data = OldData} = StateData) ->
-    io:format("data: ~p~n", [Bin]),
-    {KnownPDU, UnknownPDU, Rest} = esmpp34raw:unpack_sequence(<<OldData/binary, Bin/binary>>),
-    ?MODULE:StateName({data, KnownPDU, UnknownPDU}, StateData#state{data = Rest});
-
-handle_info({timeout, _TimerRef, {enquire_link, Seq}}, StateName, #state{response_timers = Timers} = State) ->
-    NewTimers = handle_timeout(Seq, Timers),
-    %% TODO: send error to logic
-    {next_state, StateName, State#state{response_timers = NewTimers}}; %% FIXME: maybe stop
-
-handle_info({timeout, _TimerRef, Seq}, _, #state{response_timers = Timers} = State) ->
-    NewTimers = handle_timeout(Seq, Timers),
-    {stop, normal, State#state{response_timers = NewTimers}}; %% FIXME: why stop?
-
-
-handle_info({tcp_closed, _Socket}, StateName, #state{response_timers = Timers} = State) ->
-    io:format("Socket closed, cancelling timers...~n"),
-    lists:foreach(fun(Timer) -> erlang:cancel_timer(Timer) end, dict:to_list(Timers)),
-    {stop, normal, State#state{response_timers = []}};
-
-%% TODO: handle, when direction is down and stop this
-
-
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
-
-
 
 %%--------------------------------------------------------------------
 %% @private
@@ -249,14 +180,10 @@ handle_info(_Info, StateName, State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-
 -spec(terminate(Reason :: normal | shutdown | {shutdown, term()}
                         | term(), StateName :: atom(), StateData :: term()) -> term()).
-
 terminate(_Reason, _StateName, _State) ->
     ok.
-
-
 
 %%--------------------------------------------------------------------
 %% @private
@@ -265,74 +192,31 @@ terminate(_Reason, _StateName, _State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
-
 -spec(code_change(OldVsn :: term() | {down, term()}, StateName :: atom(),
                   StateData :: #state{}, Extra :: term()) ->
              {ok, NextStateName :: atom(), NewStateData :: #state{}}).
-
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
-
-
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
 
-handle_timeout(Seq, Timers) ->
-    case dict:find(Seq, Timers) of
-        {ok, Timer} ->
-            erlang:cancel_timer(Timer),
-            dict:erase(Seq, Timers);
-        error ->
-            Timers
+
+starter(Host, Port, #state{} = State) ->
+    case inet_parse:address(Host) of
+        {ok, IpAddress} ->
+            Options = [binary, {ip, IpAddress}, {packet, raw}, {active, false}, {reuseaddr, true}],
+            case gen_tcp:connect(IpAddress, Port, Options, 30000) of %% TODO: timeout from config?
+                {ok, Socket} ->
+                    io:format("Connected to ~p:~p~n", [Host,Port]),
+                    Timer = erlang:send_after(1, self(), bind),
+                    {ok, #state{timer = Timer, socket = Socket}};
+                {error, Reason} ->
+                    io:format("TCP connect error start: ~p~n", [Reason]),
+                    {stop, normal}
+            end;
+        _ ->
+            io:format("Unable parse IP ~p, stopping client... ~n", [Host]),
+            {stop, normal}
     end.
-
-
-
-proceed_open(#state{connection = #smpp_entity{id = ConnectionId, el_interval = ElTimer} = Connection, socket = Socket} = State,
-             #pdu{sequence_number = Seq, body = #bind_transceiver{password = Password, system_id = SystemId} = Packet}) ->
-    io:format("===> TRANSCEIVER: ~p~n", [Packet]),
-    Result = esmpp34_manager:register_connection(ConnectionId, trx, SystemId, Password),
-    io:format("result of login: ~p~n", [Result]),
-    %%     {next_state, open, State};
-    case Result of
-        {ok, DirPid} ->
-            Resp = #bind_transceiver_resp{system_id = "TEST", sc_interface_version = 16#34},
-            Code = ?ESME_ROK,
-            gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
-            Ref = erlang:monitor(process, DirPid),
-            {next_state, bound_trx, State#state{dir_pid = {DirPid, Ref}}, ElTimer};
-        {error, Reason} ->
-            Resp = #bind_transceiver_resp{system_id = "TEST", sc_interface_version = 16#34},
-            Code = reason2code(Reason),
-            gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
-            {stop, normal, State} %% FIXME: do something
-    end;
-
-proceed_open(#state{connection = #smpp_entity{} = Connection, socket = Socket} = State,
-             #pdu{sequence_number = Seq, body = #bind_transmitter{} = Packet}) ->
-    io:format("===> TRANSMITTER: ~p~n", [Packet]),
-    {next_state, open, State};
-
-proceed_open(#state{connection = #smpp_entity{} = Connection, socket = Socket} = State,
-             #pdu{sequence_number = Seq, body = #bind_receiver{} = Packet}) ->
-    io:format("===> RECEIVER: ~p~n", [Packet]),
-    {next_state, open, State};
-
-proceed_open(#state{} = State, A) ->
-    io:format("error received unknown packet ~p~n", [A]),
-    {next_state, open, State}.
-
-
-
-
-%% TODO: move to utils, also add addr_resolver
-reason2code(system_id) ->
-    ?ESME_RINVSYSID;
-reason2code(password) ->
-    ?ESME_RINVPASWD;
-reason2code(already_bound) ->
-    ?ESME_RALYBND;
-reason2code(_) ->
-    ?ESME_RUNKNOWNERR.
