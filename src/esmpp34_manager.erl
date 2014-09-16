@@ -148,23 +148,6 @@ init(Args) ->
     io:format("Starting manager... ~n"),
     CallBack = proplists:get_value(callback, Args),
     {ok, #state{callback = CallBack}}.
-%%     io:format("Checking config... ~n"),
-%%     case get_config(CallBack()) of
-%%         {ok, Config} ->
-%%             io:format("Config check ok ~n"),
-%%             case run_config(#config{}, Config, #state{callback = CallBack, config = Config}) of
-%%                 #state{} = State ->
-%%                     io:format("Managr started~n"),
-%%                     {ok, State};
-%%                 {error, Reason} ->
-%%                     io:format("Managr error: ~p~n", [Reason]),
-%%                     {stop, Reason}
-%%             end;
-%%         {error, Reason} ->
-%%             io:format("Unable start manager: ~p~n", [Reason]),
-%%             {stop, Reason}
-%%     end.
-
 
 
 
@@ -219,43 +202,25 @@ handle_call({register_direction, DirId}, {From, _}, #state{direction_dict = DirD
             {reply, {error, no_direction}, State}
     end;
 
-%% handle_call({register_connection, ConnectionId, Mode, Login, Password}, _From, #state{config = #config{directions = Directions}} = State) ->
-%%     %% firstly, filter all directions, that does not contain the specific connection id
-%%     case lists:dropwhile(fun(#smpp_entity{connections = Connections}) ->
-%%                                  not lists:any(fun(#connection_param{id = ConnId, login = Logins}) when ConnId == ConnectionId ->
-%%                                                        proplists:is_defined(Login, Logins);
-%%                                                   (_) ->
-%%                                                        false
-%%                                                end, Connections)
-%%                          end, Directions) of
-%%         [FirstEntry = #smpp_entity{mode = DirMode, connections = Connections} | _] ->
-%%             %% some direction is found
-%%             %% check, if it has the appripriate mode
-%%             case check_mode(DirMode, Mode) of
-%%                 true ->
-%%                     io:format("Possible directions for connection ~p: ~p~n", [ConnectionId, FirstEntry]),
-%%                     [#connection_param{id = DirId,
-%%                                        login = Logins} | _] = lists:dropwhile(fun(#connection_param{id = Id}) when Id == ConnectionId ->
-%%                                                                                       false;
-%%                                                                                  (_) ->
-%%                                                                                       true
-%%                                                                               end, Connections),
-%%                     UserPassword = proplists:get_value(Login, Logins),
-%%                     if
-%%                         Password == UserPassword -> {reply, {ok, DirId}, State};
-%%                         true -> {reply, {error, password}, State}
-%%                     end;
-%%                 false ->
-%%                     io:format("Directions ~p requires the wrong state ~p~n", [ConnectionId, State]),
-%%                     {reply, {error, state}, State}
-%%             end;
-%%         [] ->
-%%             io:format("No directions found for connection ~p~n", [ConnectionId]),
-%%             {reply, {error, system_id}, State}
-%%     end;
 
 
-
+handle_call({register_connection, ConnectionId, Mode, RSystemId, RPassword}, {From, _}, #state{direction_dict = Directions} = State) ->
+    case dict:find(ConnectionId, Directions) of
+        {ok, #dir_record{dir = #smpp_entity{type = smsc, system_id = SystemId, password = Password}, pid = DirPid}} when SystemId == RSystemId,
+                                                                                                                         Password == RPassword ->
+            Reply = esmpp34_direction:register_connection(DirPid, Mode, From),
+            {reply, Reply, State};
+        {ok, #dir_record{dir = #smpp_entity{type = esme, outbind = #outbind_field{system_id = SystemId, password = Password}}, pid = DirPid}} when SystemId == RSystemId,
+                                                                                                                                                   Password == RPassword ->
+            Reply = esmpp34_direction:register_connection(DirPid, Mode, From),
+            {reply, Reply, State};
+        {ok, #dir_record{dir = #smpp_entity{type = smsc, system_id = SystemId}}} when SystemId == RSystemId ->
+            {reply, {error, password}, State};
+        {ok, _} ->
+            {reply, {error, system_id}, State};
+        error ->
+            {reply, {error, system_id}, State}
+    end;
 
 
 handle_call(_Request, _From, State) ->
@@ -393,21 +358,14 @@ start_connections(#smpp_entity{type = esme,
     ok;
 
 start_connections(#smpp_entity{type = smsc,
-                               allowed_modes = Modes,
+                               allowed_modes = _Modes,
                                id = _Id,
                                host = Host,
                                port = Port,
                                outbind = Outbind} = Entity) ->
-    lists:foreach(fun(_) -> esmpp34_connection_sup:start_connection(server, Host, Port, Entity) end, Modes),
-    start_outbind(client, Outbind, Entity),
+    esmpp34_connection_sup:start_connection(server, Host, Port, Entity), %% one listener for all modes
+    start_outbind(client, Outbind, Entity), %% FIXME: open client outbind connection only on demand
     ok.
-
-
-%%         start_connections(Id, Type = smsc, Modes, Host, Port, Outbind = #outbind_field{host = OutbindHost,
-%%                                                                                        port = OutbindPort,
-%%                                                                                        system_id = OutbindSystemId,
-%%                                                                                        password = OutbindPassword}) ->
-%%                                                            ok.
 
 
 start_outbind(Mode,  #outbind_field{host = OutbindHost,
@@ -416,26 +374,3 @@ start_outbind(Mode,  #outbind_field{host = OutbindHost,
 
 start_outbind(Mode, _, #smpp_entity{}) when Mode == server; Mode == client ->
     ok.
-
-
-
-
-%%
-%% start_connection(#connection_param{id = Id},
-%%                  #state{config = Config}) ->
-%%     case lists:dropwhile(fun(#connection{id = ConnId}) -> ConnId /= Id end, Config#config.connections) of
-%%         [] ->
-%%             ok;
-%%         [Connection | _] ->
-%%             io:format("==> Starting connection ~p~n", [Connection]),
-%%             esmpp34_connection_sup:start_connection(Connection)
-%%     end.
-
-
-
-
-
-check_mode(transceiver, transceiver) -> true;
-check_mode(transmitter, receiver) -> true;
-check_mode(receiver, transmitter) -> true;
-check_mode(_, _) -> false.

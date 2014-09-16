@@ -37,7 +37,7 @@
 -include("esmpp34.hrl").
 
 %% API
--export([ start_link/1 ]).
+-export([ start_link/3 ]).
 
 %% gen_server callbacks
 -export([ init/1,
@@ -51,7 +51,7 @@
 -define(ACCEPT_INTERVAL, 1000).
 -define(ACCEPT_TIMEOUT, 100).
 
--record(state, {listener, connection, connection_id = 0, timer}).
+-record(state, {host, port, listener, connection, connection_id = 0, timer}).
 
 %%%===================================================================
 %%% API
@@ -65,9 +65,9 @@
 %% @end
 %%--------------------------------------------------------------------
 
-start_link(Arg) ->
-    io:format("server started with args: ~p~n", [Arg]),
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [{connection, Arg}], []).
+start_link(Host, Port, Entity) ->
+    io:format("server started with args: [~p:~p] ~p~n", [Host, Port, Entity]),
+    gen_server:start_link(?MODULE, [{host, Host}, {port, Port}, {connection, Entity}], []).
 
 
 
@@ -89,7 +89,10 @@ start_link(Arg) ->
 
 init(Args) ->
     Connection = proplists:get_value(connection, Args),
-    starter(Connection#smpp_entity.host, #state{connection = Connection}).
+    Host = proplists:get_value(host, Args),
+    Port = proplists:get_value(port, Args),
+    io:format("Listening on ~p:~p~n", [Host,Port]),
+    starter({Host, Port}, #state{host = Host, port =Port, connection = Connection}).
 
 
 

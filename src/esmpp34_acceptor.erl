@@ -35,7 +35,8 @@
                  el_timer,
                  connection,
                  response_timers = dict:new(),
-                 data = <<>> }).
+                 data = <<>>,
+                 dir_pid}).
 
 
 
@@ -218,11 +219,20 @@ handle_info({tcp, _Socket,  Bin}, StateName, #state{data = OldData} = StateData)
 handle_info({timeout, _TimerRef, {enquire_link, Seq}}, StateName, #state{response_timers = Timers} = State) ->
     NewTimers = handle_timeout(Seq, Timers),
     %% TODO: send error to logic
-    {next_state, StateName, State#state{response_timers = NewTimers}};
+    {next_state, StateName, State#state{response_timers = NewTimers}}; %% FIXME: maybe stop
 
 handle_info({timeout, _TimerRef, Seq}, _, #state{response_timers = Timers} = State) ->
     NewTimers = handle_timeout(Seq, Timers),
-    {stop, normal, State#state{response_timers = NewTimers}};
+    {stop, normal, State#state{response_timers = NewTimers}}; %% FIXME: why stop?
+
+
+handle_info({tcp_closed, _Socket}, StateName, #state{response_timers = Timers} = State) ->
+    io:format("Socket closed, cancelling timers...~n"),
+    lists:foreach(fun(Timer) -> erlang:cancel_timer(Timer) end, dict:to_list(Timers)),
+    {stop, normal, State#state{response_timers = []}};
+
+%% TODO: handle, when direction is down and stop this
+
 
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
@@ -281,30 +291,46 @@ handle_timeout(Seq, Timers) ->
 
 
 proceed_open(#state{connection = #smpp_entity{id = ConnectionId, el_interval = ElTimer} = Connection, socket = Socket} = State,
-                #pdu{sequence_number = Seq, body = #bind_transceiver{password = Password, system_id = SystemId} = Packet}) ->
+             #pdu{sequence_number = Seq, body = #bind_transceiver{password = Password, system_id = SystemId} = Packet}) ->
     io:format("===> TRANSCEIVER: ~p~n", [Packet]),
-    Result = esmpp34_manager:register_connection(ConnectionId, transceiver, SystemId, Password),
+    Result = esmpp34_manager:register_connection(ConnectionId, trx, SystemId, Password),
     io:format("result of login: ~p~n", [Result]),
-    {next_state, open, State};
-%%     case esmpp34_l_bind:bind_request(Direction, Packet) of
-%%         {ok, Code, Resp} ->
-%%             gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
-%%             {next_state, bound_trx, State, ElTimer};
-%%         {error, Code, Resp} ->
-%%             gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
-%%     {stop, normal, State} %% FIXME: do something
-%%     end;
+    %%     {next_state, open, State};
+    case Result of
+        {ok, DirPid} ->
+            Resp = #bind_transceiver_resp{system_id = "TEST", sc_interface_version = 16#34},
+            Code = ?ESME_ROK,
+            gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
+            Ref = erlang:monitor(process, DirPid),
+            {next_state, bound_trx, State#state{dir_pid = {DirPid, Ref}}, ElTimer};
+        {error, Reason} ->
+            Resp = #bind_transceiver_resp{system_id = "TEST", sc_interface_version = 16#34},
+            Code = reason2code(Reason),
+            gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
+            {stop, normal, State} %% FIXME: do something
+    end;
 
 proceed_open(#state{connection = #smpp_entity{} = Connection, socket = Socket} = State,
-                #pdu{sequence_number = Seq, body = #bind_transmitter{} = Packet}) ->
+             #pdu{sequence_number = Seq, body = #bind_transmitter{} = Packet}) ->
     io:format("===> TRANSMITTER: ~p~n", [Packet]),
     {next_state, open, State};
 
 proceed_open(#state{connection = #smpp_entity{} = Connection, socket = Socket} = State,
-                #pdu{sequence_number = Seq, body = #bind_receiver{} = Packet}) ->
+             #pdu{sequence_number = Seq, body = #bind_receiver{} = Packet}) ->
     io:format("===> RECEIVER: ~p~n", [Packet]),
     {next_state, open, State};
 
 proceed_open(#state{} = State, A) ->
     io:format("error received unknown packet ~p~n", [A]),
     {next_state, open, State}.
+
+
+
+reason2code(system_id) ->
+    ?ESME_RINVSYSID;
+reason2code(password) ->
+    ?ESME_RINVPASWD;
+reason2code(already_bound) ->
+    ?ESME_RALYBND;
+reason2code(_) ->
+    ?ESME_RUNKNOWNERR.

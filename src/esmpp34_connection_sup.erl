@@ -104,7 +104,7 @@ init([]) ->
 
 start_connection(server, Host, Port, #smpp_entity{id = Id} = Entity) ->
     ConnSpec = {{esmpp34_server, Id},
-                {esmpp34_server, start_link, [Entity]}, transient, 3000, worker, [esmpp34_server]},
+                {esmpp34_server, start_link, [Host, Port, Entity]}, transient, 3000, worker, [esmpp34_server]},
     supervisor:start_child(?MODULE, ConnSpec);
 
 start_connection(client, Host, Port, #smpp_entity{id = Id} = Entity) ->

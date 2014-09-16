@@ -6,33 +6,32 @@ Config = fun() ->
 [
     [
         {id, 0},
-        {type, esme},
-        {system_id, "login"},
-        {password, "passsword"},
-        {host, "192.168.0.1"},
+        {type, smsc},
+        {system_id, "proxy"},
+        {password, "test"},
         {port, 12345},
         {allowed_modes, [tx, rx]},
         {outbind, [
                     {system_id, "ologin"},
                     {password, "opasssword"},
-                    {host, all},
+                    {host, "localhost"},
                     {port, 12346}
                   ]
         }
     ],
     [
         {id, 1},
-        {type, smsc},
+        {type, esme},
         {system_id, "login"},
         {password, "passsword"},
         {host, "localhost"},
-        {port, 54321},
+        {port, 43210},
         {allowed_modes, [trx]},
         {outbind, [
                     {system_id, "ologin1"},
                     {password, "opasssword1"},
-                    {host, "192.168.1.1"},
-                    {port, 54320}
+                    {host, all},
+                    {port, 43211}
                   ]
         }
     ]

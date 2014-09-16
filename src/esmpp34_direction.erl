@@ -34,7 +34,8 @@
 -behaviour(gen_server).
 
 %% API
--export([ start_link/1 ]).
+-export([ start_link/1,
+          register_connection/3 ]).
 
 %% gen_server callbacks
 -export([ init/1,
@@ -54,7 +55,9 @@
 
 -record(state, { dir :: #smpp_entity{},
                  tx :: pid(),
-                 rx :: pid() }).
+                 tx_ref,
+                 rx :: pid(),
+                 rx_ref }).
 
 
 
@@ -73,6 +76,12 @@
 
 start_link(#smpp_entity{} = Dir) ->
     gen_server:start_link(?MODULE, [{dir, Dir}], []).
+
+
+
+
+register_connection(DirPid, Mode, Pid) ->
+    gen_server:call(DirPid, {register_connection, Mode, Pid}).
 
 
 
@@ -121,8 +130,23 @@ init(Args) ->
              {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
              {stop, Reason :: term(), NewState :: #state{}}).
 
-handle_call(_Request, _From, State) ->
-    {reply, ok, State}.
+
+handle_call({register_connection, tx, Pid}, _From, #state{tx = Tx, tx_ref = TxRef} = State) when Tx == undefined, TxRef == undefined->
+    Ref = erlang:monitor(process, Pid),
+    {reply, {ok, self()}, State#state{tx = Pid, tx_ref = Ref}};
+
+handle_call({register_connection, rx, Pid}, _From, #state{rx = Rx, rx_ref = RxRef} = State) when Rx == undefined, RxRef == undefined->
+    Ref = erlang:monitor(process, Pid),
+    {reply, {ok, self()}, State#state{rx = Pid, rx_ref = Ref}};
+
+handle_call({register_connection, trx, Pid}, _From, #state{tx = Tx, rx = Rx, tx_ref = TxRef, rx_ref = RxRef} = State)  when Tx == undefined, TxRef == undefined,
+                                                                                                                            Rx == undefined, RxRef == undefined ->
+    io:format("Dir ~p registers ~p, Tx: ~p, Rx: ~p, TxRef: ~p, RxRef: ~p ~n", [self(), Pid, Tx, Rx, TxRef, RxRef]),
+    Ref = erlang:monitor(process, Pid),
+    {reply, {ok, self()}, State#state{tx = Pid, rx = Pid, rx_ref = Ref, tx_ref = Ref}};
+
+handle_call({register_connection, _, _Pid}, _From, #state{} = State) ->
+    {reply, {error, already_bound}, State}.
 
 
 
@@ -165,7 +189,23 @@ handle_info(register, #state{dir = Direction} = State) ->
     io:format("Direction #~p: trying to register: ~p~n",[Direction#smpp_entity.id, Res]),
     {noreply, State};
 
-handle_info(_Info, State) ->
+%% TODO: handle, when connection is down
+handle_info({'DOWN', MonitorRef, process, DownPid, _}, #state{tx = Tx, rx = Rx, tx_ref = TxRef, rx_ref = RxRef} = State) when DownPid == Tx,
+                                                                                                                              DownPid == Rx,
+                                                                                                                              MonitorRef == TxRef,
+                                                                                                                              MonitorRef == RxRef ->
+    {noreply, State#state{tx = undefined, rx = undefined, tx_ref = undefined, rx_ref = undefined}};
+
+handle_info({'DOWN', MonitorRef, process, DownPid, _}, #state{tx = Tx, tx_ref = TxRef} = State) when DownPid == Tx,
+                                                                                                     MonitorRef == TxRef ->
+    {noreply, State#state{tx = undefined, tx_ref = undefined}};
+
+handle_info({'DOWN', MonitorRef, process, DownPid, _}, #state{rx = Rx, rx_ref = RxRef} = State) when DownPid == Rx,
+                                                                                                     MonitorRef == RxRef ->
+    {noreply, State#state{rx = undefined, rx_ref = undefined}};
+
+handle_info(Info, State) ->
+    io:format("~p: ~p~n", [?MODULE, Info]),
     {noreply, State}.
 
 
