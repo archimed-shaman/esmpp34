@@ -25,9 +25,9 @@ Config = fun() ->
         {type, esme},
         {system_id, "login"},
         {password, "passsword"},
-        {host, "localhost"},
+        {host, "127.0.0.1"},
         {port, 43210},
-        {allowed_modes, [trx]},
+        {allowed_modes, [tx, rx, trx]},
         {outbind, [
                     {system_id, "ologin1"},
                     {password, "opasssword1"},

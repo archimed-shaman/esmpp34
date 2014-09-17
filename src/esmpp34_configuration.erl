@@ -123,7 +123,7 @@ parse_entity([{host, Host} | Tail], #smpp_entity{} = Entity) ->
 parse_entity([{port, Port} | Tail], #smpp_entity{} = Entity) ->
     parse_entity(Tail, Entity#smpp_entity{port = Port});
 parse_entity([{allowed_modes, AllowedModes} | Tail], #smpp_entity{} = Entity) ->
-    parse_entity(Tail, Entity#smpp_entity{allowed_modes = [X || X <- AllowedModes, X == tx, X == rx, X == trx]});
+    parse_entity(Tail, Entity#smpp_entity{allowed_modes = [X || X <- AllowedModes, X == tx orelse X == rx orelse X == trx]});
 parse_entity([{outbind, Outbind} | Tail], #smpp_entity{} = Entity) ->
     parse_entity(Tail, Entity#smpp_entity{outbind = parse_outbind(Outbind)});
 parse_entity([_ | Tail], #smpp_entity{} = Entity) ->

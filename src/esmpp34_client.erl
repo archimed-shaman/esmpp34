@@ -11,12 +11,17 @@
 
 -behaviour(gen_fsm).
 
+-include("esmpp34.hrl").
+-include_lib("esmpp34raw/include/esmpp34raw_types.hrl").
+-include_lib("esmpp34raw/include/esmpp34raw_constants.hrl").
+
 %% API
 -export([start_link/4]).
 
 %% gen_fsm callbacks
 -export([init/1,
-         state_name/2,
+         open/2,
+         open_bind_resp/2,
          state_name/3,
          handle_event/3,
          handle_sync_event/4,
@@ -26,7 +31,14 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {timer, socket, host, port, connection}).
+-record(state, { response_timers = dict:new(),
+                 data = <<>>,
+                 socket,
+                 host,
+                 port,
+                 connection,
+                 mode,
+                 seq = 0 }).
 
 %%%===================================================================
 %%% API
@@ -66,8 +78,9 @@ init(Args) ->
     Connection = proplists:get_value(connection, Args),
     Host = proplists:get_value(host, Args),
     Port = proplists:get_value(port, Args),
+    Mode = proplists:get_value(mode, Args),
     io:format("Connecting to ~p:~p~n", [Host,Port]),
-    starter(Host, Port, #state{host = Host, port = Port, connection = Connection}).
+    starter(Host, Port, #state{host = Host, port = Port, connection = Connection, mode = Mode}).
 
 
 %%--------------------------------------------------------------------
@@ -82,8 +95,53 @@ init(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 
-state_name(_Event, State) ->
-    {next_state, state_name, State}.
+open(bind, #state{socket = Socket,
+                  mode = Mode,
+                  connection = #smpp_entity{system_id = SystemId, password = Password},
+                  seq = Seq,
+                  response_timers = Timers} = State) when Mode == trx ->
+    Req = #bind_transceiver{system_id = SystemId,
+                            password = Password,
+                            system_type = [], %% FIXME: maybe, its necessary to set correct system type
+                            interface_version = 16#34
+                            %% TODO: fill this fields
+                            %% addr_ton           = 0,
+                            %% addr_npi           = 0,
+                            %% address_range      = []
+                           },
+    Code = ?ESME_ROK,
+    gen_tcp:send(Socket, esmpp34raw:pack_single(Req, Code, Seq)),
+    Timer = erlang:send_after(10000, self(), {timeout, Seq}), %% TODO: timeout from config
+    Newtimers = dict:store(Seq, Timer, Timers),
+    {next_state, open_bind_resp, State#state{seq = Seq + 1, response_timers = Newtimers}}.
+
+
+open_bind_resp({data, [#pdu{} = Resp | _KnownPDU], _UnknownPDU}, #state{socket = Socket, mode = Mode, response_timers = Timers} = State) -> %% FIXME: proceed other known PDU
+    case proceed_bind_resp(Resp, Mode) of
+        {ok, NextState, Seq} ->
+            NewTimers = case dict:find(Seq, Timers) of %% TODO: to utils
+                            {ok, TimerRef} ->
+                                erlang:cancel_timer(TimerRef),
+                                dict:erase(Seq, Timers);
+                            error ->
+                                Timers
+                        end,
+            io:format("Connected!~n"),
+            {next_state, NextState, State#state{response_timers = NewTimers}};
+        {error, Error} ->
+            io:format("Unable to connect: ~p~n", [Error]),
+            {stop, normal};
+        {unknown_command, Seq, CommandId, _Status} ->
+            io:format("Received unknown PDU in unbinded: ~p~n", [CommandId]),
+            Req = #generic_nack{},
+            Code = ?ESME_RINVBNDSTS,
+            gen_tcp:send(Socket, esmpp34raw:pack_single(Req, Code, Seq)),
+            {next_state, open_bind_resp, State}
+    end;
+
+open_bind_resp(Signal, #state{} = State) ->
+    io:format("===========> ~p~n", [Signal]),
+    {next_state, open_bind_resp, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -107,6 +165,7 @@ state_name(_Event, State) ->
              {stop, Reason :: normal | term(), NewState :: #state{}} |
              {stop, Reason :: normal | term(), Reply :: term(),
               NewState :: #state{}}).
+
 state_name(_Event, _From, State) ->
     Reply = ok,
     {reply, Reply, state_name, State}.
@@ -126,6 +185,7 @@ state_name(_Event, _From, State) ->
              {next_state, NextStateName :: atom(), NewStateData :: #state{},
               timeout() | hibernate} |
              {stop, Reason :: term(), NewStateData :: #state{}}).
+
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
@@ -167,6 +227,31 @@ handle_sync_event(_Event, _From, StateName, State) ->
              {next_state, NextStateName :: atom(), NewStateData :: term(),
               timeout() | hibernate} |
              {stop, Reason :: normal | term(), NewStateData :: term()}).
+
+handle_info(bind, StateName, #state{} = StateData) ->
+    ?MODULE:StateName(bind, StateData);
+
+handle_info({tcp, _Socket,  Bin}, StateName, #state{data = OldData} = StateData) ->
+    io:format("data: ~p~n", [Bin]),
+    {KnownPDU, UnknownPDU, Rest} = esmpp34raw:unpack_sequence(<<OldData/binary, Bin/binary>>),
+    ?MODULE:StateName({data, KnownPDU, UnknownPDU}, StateData#state{data = Rest});
+
+%% TODO: timers
+%% handle_info({timeout, _TimerRef, {enquire_link, Seq}}, StateName, #state{response_timers = Timers} = State) ->
+%%   NewTimers = handle_timeout(Seq, Timers),
+%%   %% TODO: send error to logic
+%%   {next_state, StateName, State#state{response_timers = NewTimers}}; %% FIXME: maybe stop
+
+%% handle_info({timeout, _TimerRef, Seq}, _, #state{response_timers = Timers} = State) ->
+%%   NewTimers = handle_timeout(Seq, Timers),
+%%   {stop, normal, State#state{response_timers = NewTimers}}; %% FIXME: why stop?
+
+
+handle_info({tcp_closed, _Socket}, _StateName, #state{response_timers = Timers} = State) ->
+    io:format("Socket closed, cancelling timers...~n"),
+    lists:foreach(fun(Timer) -> erlang:cancel_timer(Timer) end, dict:to_list(Timers)),
+    {stop, normal, State#state{response_timers = []}}; %% FIXME: reconnect
+
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
@@ -206,12 +291,12 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 starter(Host, Port, #state{} = State) ->
     case inet_parse:address(Host) of
         {ok, IpAddress} ->
-            Options = [binary, {ip, IpAddress}, {packet, raw}, {active, false}, {reuseaddr, true}],
+            Options = [binary, {ip, IpAddress}, {packet, raw}, {active, true}, {reuseaddr, true}],
             case gen_tcp:connect(IpAddress, Port, Options, 30000) of %% TODO: timeout from config?
                 {ok, Socket} ->
                     io:format("Connected to ~p:~p~n", [Host,Port]),
-                    Timer = erlang:send_after(1, self(), bind),
-                    {ok, #state{timer = Timer, socket = Socket}};
+                    erlang:send_after(1, self(), bind),
+                    {ok, open, State#state{socket = Socket}};
                 {error, Reason} ->
                     io:format("TCP connect error start: ~p~n", [Reason]),
                     {stop, normal}
@@ -220,3 +305,10 @@ starter(Host, Port, #state{} = State) ->
             io:format("Unable parse IP ~p, stopping client... ~n", [Host]),
             {stop, normal}
     end.
+
+proceed_bind_resp(#pdu{sequence_number = Num, command_id = ?bind_transceiver_resp, command_status = Status}, Mode) when Mode == trx, Status == ?ESME_ROK ->
+    {ok, transceiver, Num};
+proceed_bind_resp(#pdu{sequence_number = _Num, command_id = ?bind_transceiver_resp, command_status = Status}, Mode) when Mode == trx, Status /= ?ESME_ROK ->
+    {error, Status};
+proceed_bind_resp(#pdu{sequence_number = Num, command_id = CommandId, command_status = Status}, _Mode)  ->
+    {unknown_command, Num, CommandId, Status}.
