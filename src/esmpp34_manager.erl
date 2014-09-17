@@ -37,6 +37,7 @@
 -export([ start_link/1,
           run_config/0,
           register_direction/1,
+          register_connection/2,
           register_connection/4 ]).
 
 %% gen_server callbacks
@@ -121,7 +122,8 @@ register_direction(Id) ->
 
 
 
-
+register_connection(ConnectionId, Mode) ->
+    gen_server:call(?SERVER, {register_connection, ConnectionId, Mode}).
 
 register_connection(ConnectionId, Mode, Login, Password) ->
     gen_server:call(?SERVER, {register_connection, ConnectionId, Mode, Login, Password}).
@@ -203,6 +205,14 @@ handle_call({register_direction, DirId}, {From, _}, #state{direction_dict = DirD
     end;
 
 
+handle_call({register_connection, ConnectionId, Mode}, {From, _}, #state{direction_dict = Directions} = State) ->
+    case dict:find(ConnectionId, Directions) of
+        {ok, #dir_record{dir = #smpp_entity{}, pid = DirPid}} ->
+            Reply = esmpp34_direction:register_connection(DirPid, Mode, From),
+            {reply, Reply, State};
+        error ->
+            {reply, {error, internal_error}, State}
+    end;
 
 handle_call({register_connection, ConnectionId, Mode, RSystemId, RPassword}, {From, _}, #state{direction_dict = Directions} = State) ->
     case dict:find(ConnectionId, Directions) of
@@ -263,7 +273,13 @@ handle_info({'DOWN', MonitorRef, process, DownPid, _}, #state{pid_dict = PidDict
             NewDirDict = case dict:find(DirId, DirDict) of
                              {ok, #dir_record{connection_pid = ConnPids} = DirRec} ->
                                  %% if direction crashed, kill all dependent connections
-                                 %% FIXME: maybe ask stop
+
+                                 %% FIXME: connection_pid is deprecated and always empty, rewrite this
+                                 %% all client and accpeted connections will be stopped to, as they monitor the direction
+                                 %% the main problem - to shut down correctly all the listeners, as there can be only one
+                                 %% lisener for several connection. The listener should be stopped only if all other
+                                 %% directions are down
+
                                  lists:foreach(fun(Pid) -> erlang:exit(Pid, direction_down) end, ConnPids),
                                  dict:update(DirId, DirRec#dir_record{pid = null, connection_pid = []}, DirDict);
                              error ->

@@ -194,7 +194,7 @@ starter({all, Port}, #state{} = State) ->
     end;
 
 starter ({Address, Port}, #state{} = State) ->
-    case inet_parse:address(Address) of
+    case esmpp34_utils:resolver(Address) of
         {ok, IpAddress} ->
             io:format("Starting at ~p:~p~n", [Address, Port]),
             Options = [binary, {ip, IpAddress}, {packet, raw}, {active, false}, {reuseaddr, true}],
@@ -206,9 +206,9 @@ starter ({Address, Port}, #state{} = State) ->
                     io:format("TCP Listener error start: ~p~n", [Reason]),
                     {stop, {tcp_error, Reason}}
             end;
-        _ ->
+        Error ->
             %% FIXME: maybe insecure
-            io:format("Unable determine interface, starting on all... ~n"),
+            io:format("Unable determine interface: [~p], starting on all... ~n", [Error]),
             starter({all, Port}, State)
     end.
 

@@ -217,21 +217,22 @@ handle_info({tcp, _Socket,  Bin}, StateName, #state{data = OldData} = StateData)
     ?MODULE:StateName({data, KnownPDU, UnknownPDU}, StateData#state{data = Rest});
 
 handle_info({timeout, _TimerRef, {enquire_link, Seq}}, StateName, #state{response_timers = Timers} = State) ->
-    NewTimers = handle_timeout(Seq, Timers),
+    NewTimers = esmpp34_utils:cancel_timeout(Seq, Timers),
     %% TODO: send error to logic
     {next_state, StateName, State#state{response_timers = NewTimers}}; %% FIXME: maybe stop
 
 handle_info({timeout, _TimerRef, Seq}, _, #state{response_timers = Timers} = State) ->
-    NewTimers = handle_timeout(Seq, Timers),
+    NewTimers = esmpp34_utils:cancel_timeout(Seq, Timers),
     {stop, normal, State#state{response_timers = NewTimers}}; %% FIXME: why stop?
 
 
-handle_info({tcp_closed, _Socket}, StateName, #state{response_timers = Timers} = State) ->
+handle_info({tcp_closed, _Socket}, _StateName, #state{response_timers = Timers} = State) ->
     io:format("Socket closed, cancelling timers...~n"),
     lists:foreach(fun(Timer) -> erlang:cancel_timer(Timer) end, dict:to_list(Timers)),
     {stop, normal, State#state{response_timers = []}};
 
-%% TODO: handle, when direction is down and stop this
+handle_info({'DOWN', _MonitorRef, process, DownPid, _}, _StateName, #state{dir_pid = {Pid, _Ref}}) when DownPid == Pid ->
+    {stop, normal};
 
 
 handle_info(_Info, StateName, State) ->
@@ -279,17 +280,6 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-handle_timeout(Seq, Timers) ->
-    case dict:find(Seq, Timers) of
-        {ok, Timer} ->
-            erlang:cancel_timer(Timer),
-            dict:erase(Seq, Timers);
-        error ->
-            Timers
-    end.
-
-
-
 proceed_open(#state{connection = #smpp_entity{id = ConnectionId, el_interval = ElTimer} = Connection, socket = Socket} = State,
              #pdu{sequence_number = Seq, body = #bind_transceiver{password = Password, system_id = SystemId} = Packet}) ->
     io:format("===> TRANSCEIVER: ~p~n", [Packet]),
@@ -305,7 +295,7 @@ proceed_open(#state{connection = #smpp_entity{id = ConnectionId, el_interval = E
             {next_state, bound_trx, State#state{dir_pid = {DirPid, Ref}}, ElTimer};
         {error, Reason} ->
             Resp = #bind_transceiver_resp{system_id = "TEST", sc_interface_version = 16#34},
-            Code = reason2code(Reason),
+            Code = esmpp34_utils:reason2code(Reason),
             gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
             {stop, normal, State} %% FIXME: do something
     end;
@@ -323,16 +313,3 @@ proceed_open(#state{connection = #smpp_entity{} = Connection, socket = Socket} =
 proceed_open(#state{} = State, A) ->
     io:format("error received unknown packet ~p~n", [A]),
     {next_state, open, State}.
-
-
-
-
-%% TODO: move to utils, also add addr_resolver
-reason2code(system_id) ->
-    ?ESME_RINVSYSID;
-reason2code(password) ->
-    ?ESME_RINVPASWD;
-reason2code(already_bound) ->
-    ?ESME_RALYBND;
-reason2code(_) ->
-    ?ESME_RUNKNOWNERR.

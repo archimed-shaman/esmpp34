@@ -38,7 +38,8 @@
                  port,
                  connection,
                  mode,
-                 seq = 0 }).
+                 seq = 0,
+                 dir_pid }).
 
 %%%===================================================================
 %%% API
@@ -111,23 +112,26 @@ open(bind, #state{socket = Socket,
                            },
     Code = ?ESME_ROK,
     gen_tcp:send(Socket, esmpp34raw:pack_single(Req, Code, Seq)),
-    Timer = erlang:send_after(10000, self(), {timeout, Seq}), %% TODO: timeout from config
+    Timer = erlang:send_after(10000, self(), Seq), %% TODO: timeout from config
     Newtimers = dict:store(Seq, Timer, Timers),
     {next_state, open_bind_resp, State#state{seq = Seq + 1, response_timers = Newtimers}}.
 
 
-open_bind_resp({data, [#pdu{} = Resp | _KnownPDU], _UnknownPDU}, #state{socket = Socket, mode = Mode, response_timers = Timers} = State) -> %% FIXME: proceed other known PDU
+open_bind_resp({data, [#pdu{} = Resp | _KnownPDU], _UnknownPDU}, #state{connection = #smpp_entity{id = Id},
+                                                                        socket = Socket,
+                                                                        mode = Mode,
+                                                                        response_timers = Timers} = State) -> %% FIXME: proceed other known PDU
     case proceed_bind_resp(Resp, Mode) of
         {ok, NextState, Seq} ->
-            NewTimers = case dict:find(Seq, Timers) of %% TODO: to utils
-                            {ok, TimerRef} ->
-                                erlang:cancel_timer(TimerRef),
-                                dict:erase(Seq, Timers);
-                            error ->
-                                Timers
-                        end,
-            io:format("Connected!~n"),
-            {next_state, NextState, State#state{response_timers = NewTimers}};
+            NewTimers = esmpp34_utils:cancel_timeout(Seq, Timers),
+            case esmpp34_manager:register_connection(Id, Mode) of
+                {ok, DirPid} ->
+                    io:format("Connected!~n"),
+                    Ref = erlang:monitor(process, DirPid),
+                    {next_state, NextState, State#state{dir_pid = {DirPid, Ref}, response_timers = NewTimers}};
+                {error, _Reason} ->
+                    {stop, normal}
+            end;
         {error, Error} ->
             io:format("Unable to connect: ~p~n", [Error]),
             {stop, normal};
@@ -242,15 +246,19 @@ handle_info({tcp, _Socket,  Bin}, StateName, #state{data = OldData} = StateData)
 %%   %% TODO: send error to logic
 %%   {next_state, StateName, State#state{response_timers = NewTimers}}; %% FIXME: maybe stop
 
-%% handle_info({timeout, _TimerRef, Seq}, _, #state{response_timers = Timers} = State) ->
-%%   NewTimers = handle_timeout(Seq, Timers),
-%%   {stop, normal, State#state{response_timers = NewTimers}}; %% FIXME: why stop?
+handle_info({timeout, _TimerRef, Seq}, StateName, #state{response_timers = Timers} = State) ->
+    NewTimers = esmpp34_utils:cancel_timeout(Seq, Timers),
+    %% TODO: send error to logic
+    {next_state, StateName, State#state{response_timers = NewTimers}};
 
 
 handle_info({tcp_closed, _Socket}, _StateName, #state{response_timers = Timers} = State) ->
     io:format("Socket closed, cancelling timers...~n"),
     lists:foreach(fun(Timer) -> erlang:cancel_timer(Timer) end, dict:to_list(Timers)),
     {stop, normal, State#state{response_timers = []}}; %% FIXME: reconnect
+
+handle_info({'DOWN', _MonitorRef, process, DownPid, _}, _StateName, #state{dir_pid = {Pid, _Ref}}) when DownPid == Pid ->
+    {stop, normal};
 
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
@@ -289,7 +297,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 
 starter(Host, Port, #state{} = State) ->
-    case inet_parse:address(Host) of
+    case esmpp34_utils:resolver(Host) of
         {ok, IpAddress} ->
             Options = [binary, {ip, IpAddress}, {packet, raw}, {active, true}, {reuseaddr, true}],
             case gen_tcp:connect(IpAddress, Port, Options, 30000) of %% TODO: timeout from config?
@@ -301,8 +309,8 @@ starter(Host, Port, #state{} = State) ->
                     io:format("TCP connect error start: ~p~n", [Reason]),
                     {stop, normal}
             end;
-        _ ->
-            io:format("Unable parse IP ~p, stopping client... ~n", [Host]),
+        Error ->
+            io:format("Unable parse IP ~p : [~p], stopping client... ~n", [Host, Error]),
             {stop, normal}
     end.
 
