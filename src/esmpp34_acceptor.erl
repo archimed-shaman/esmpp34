@@ -10,6 +10,7 @@
 -author("morozov").
 
 -include("esmpp34.hrl").
+-include("esmpp34_defs.hrl").
 -include_lib("esmpp34raw/include/esmpp34raw_types.hrl").
 -include_lib("esmpp34raw/include/esmpp34raw_constants.hrl").
 
@@ -21,6 +22,7 @@
 %% gen_fsm callbacks
 -export([ init/1,
           open/2,
+	  bound_trx/2,
           state_name/3,
           handle_event/3,
           handle_sync_event/4,
@@ -29,15 +31,6 @@
           code_change/4 ]).
 
 -define(SERVER, ?MODULE).
-
--record(state, { id,
-                 socket,
-                 el_timer,
-                 connection,
-                 response_timers = dict:new(),
-                 data = <<>>,
-                 dir_pid}).
-
 
 
 %%%===================================================================
@@ -113,6 +106,23 @@ open({data, [Head | _], []}, #state{socket = Socket} = State) ->
     inet:setopts(Socket, [{active, once}]),
     proceed_open(State, Head).
 
+
+
+
+
+bound_trx(enquire_link, #state{socket = Socket, seq = Seq, response_timers = Timers} = State) ->
+    Req = #enquire_link{},
+    Code = ?ESME_ROK,
+    gen_tcp:send(Socket, esmpp34raw:pack_single(Req, Code, Seq)),
+    Timer = erlang:send_after(30000, self(), {timeout, Seq, enquire_link}), %% TODO: interval from config
+    NewTimers = dict:store(Seq, Timer, Timers),
+    {next_state, bound_trx, State#state{response_timers = NewTimers, seq = Seq + 1}};
+
+bound_trx({data, Pdus, _}, #state{} = State) ->
+    NewState = lists:foldl(fun(Value, Acc) -> esmpp34_utils:proceed_data(trx, Acc, Value) end, State, Pdus),
+    %% TODO: handle packets to change state
+    {next_state, bound_trx, NewState}.
+    
 
 
 %%--------------------------------------------------------------------
@@ -211,17 +221,15 @@ handle_sync_event(_Event, _From, StateName, State) ->
               timeout() | hibernate} |
              {stop, Reason :: normal | term(), NewStateData :: term()}).
 
-handle_info({tcp, _Socket,  Bin}, StateName, #state{data = OldData} = StateData) ->
+handle_info({tcp, Socket,  Bin}, StateName, #state{data = OldData} = StateData) ->
     io:format("data: ~p~n", [Bin]),
     {KnownPDU, UnknownPDU, Rest} = esmpp34raw:unpack_sequence(<<OldData/binary, Bin/binary>>),
-    ?MODULE:StateName({data, KnownPDU, UnknownPDU}, StateData#state{data = Rest});
+    Result = ?MODULE:StateName({data, KnownPDU, UnknownPDU}, StateData#state{data = Rest}),
+    inet:setopts(Socket, [{active, once}]),
+    Result;
 
-handle_info({timeout, _TimerRef, {enquire_link, Seq}}, StateName, #state{response_timers = Timers} = State) ->
-    NewTimers = esmpp34_utils:cancel_timeout(Seq, Timers),
-    %% TODO: send error to logic
-    {next_state, StateName, State#state{response_timers = NewTimers}}; %% FIXME: maybe stop
-
-handle_info({timeout, _TimerRef, Seq}, _, #state{response_timers = Timers} = State) ->
+handle_info({timeout, Seq, enquire_link}, _, #state{response_timers = Timers} = State) ->
+    io:format("Timeout for enquire_link ~p~n", [Seq]),
     NewTimers = esmpp34_utils:cancel_timeout(Seq, Timers),
     {stop, normal, State#state{response_timers = NewTimers}}; %% FIXME: why stop?
 
@@ -234,9 +242,12 @@ handle_info({tcp_closed, _Socket}, _StateName, #state{response_timers = Timers} 
 handle_info({'DOWN', _MonitorRef, process, DownPid, _}, _StateName, #state{dir_pid = {Pid, _Ref}}) when DownPid == Pid ->
     {stop, normal};
 
+handle_info(enquire_link, StateName, #state{} = State) ->
+    ?MODULE:StateName(enquire_link, State).
 
-handle_info(_Info, StateName, State) ->
-    {next_state, StateName, State}.
+
+%% andle_info(_Info, StateName, State) ->
+%%    {next_state, StateName, State}.
 
 
 
@@ -280,7 +291,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-proceed_open(#state{connection = #smpp_entity{id = ConnectionId, el_interval = ElTimer} = Connection, socket = Socket} = State,
+proceed_open(#state{connection = #smpp_entity{id = ConnectionId} = Connection, socket = Socket} = State,
              #pdu{sequence_number = Seq, body = #bind_transceiver{password = Password, system_id = SystemId} = Packet}) ->
     io:format("===> TRANSCEIVER: ~p~n", [Packet]),
     Result = esmpp34_manager:register_connection(ConnectionId, trx, SystemId, Password),
@@ -292,7 +303,8 @@ proceed_open(#state{connection = #smpp_entity{id = ConnectionId, el_interval = E
             Code = ?ESME_ROK,
             gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
             Ref = erlang:monitor(process, DirPid),
-            {next_state, bound_trx, State#state{dir_pid = {DirPid, Ref}}, ElTimer};
+	    NewState = esmpp34_utils:start_el_timer(State),
+            {next_state, bound_trx, NewState#state{dir_pid = {DirPid, Ref}}};
         {error, Reason} ->
             Resp = #bind_transceiver_resp{system_id = "TEST", sc_interface_version = 16#34},
             Code = esmpp34_utils:reason2code(Reason),

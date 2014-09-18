@@ -29,31 +29,21 @@
 %%%-------------------------------------------------------------------
 
 
--ifndef(esmpp34_hrl).
--define(esmpp34_hrl, true).
+-ifndef(esmpp34_defs_hrl).
+-define(esmpp34_defs_hrl, true).
 -author("Alexander Morozov aka ~ArchimeD~").
 
--type entity_type() :: esme
-                     | smsc.
+-record(state, { id,
+		 response_timers = dict:new(),
+                 data = <<>>,
+                 socket,
+                 host,
+                 port,
+                 connection,
+                 mode,
+                 seq = 0,
+                 dir_pid,
+		 el_timer }).
 
--type mode() :: tx
-              | rx
-              | trx.
--type modes() :: [mode()].
 
-
--record(outbind_field, { host      :: inet:ip_address() | all,
-                         port      :: inet:port_number(),
-                         system_id :: string(),
-                         password  :: string() }).
-
--record(smpp_entity, { id                  :: non_neg_integer(),
-                       type                :: entity_type(),
-                       host                :: inet:ip_address() | all,
-                       port                :: inet:port_number(),
-                       system_id           :: string(),
-                       password            :: string(),
-                       allowed_modes = []  :: modes(),
-                       outbind             :: #outbind_field{},
-                       el_interval = 1000 :: non_neg_integer() }).
 -endif.

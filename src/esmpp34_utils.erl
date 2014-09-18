@@ -10,13 +10,19 @@
 -module(esmpp34_utils).
 -author("morozov").
 
+-include("esmpp34.hrl").
+-include("esmpp34_defs.hrl").
 -include_lib("esmpp34raw/include/esmpp34raw_constants.hrl").
+-include_lib("esmpp34raw/include/esmpp34raw_types.hrl").
+
 
 %% API
 -export([
          cancel_timeout/2,
          reason2code/1,
-         resolver/1
+         resolver/1,
+	 proceed_data/3,
+	 start_el_timer/1
         ]).
 
 
@@ -71,3 +77,61 @@ resolver_dns(Host) ->
         [IP | _] -> {ok, IP};
         [] -> {error, unable_resolve}
     end.
+
+
+
+
+
+proceed_data(_, #state{response_timers = Timers} = State, #pdu{sequence_number = Seq,
+							   body = #enquire_link_resp{}}) ->
+    NewTimers = cancel_timeout(Seq, Timers),
+    io:format("Received enquire_link_resp~n"),
+    start_el_timer(State#state{response_timers = NewTimers});
+
+proceed_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq,
+							       body = #enquire_link{}}) ->
+    %% TODO: cancel enquire_link timer
+    io:format("Received enquire_link_req~n"),
+    Resp = #enquire_link_resp{},
+    Code = ?ESME_ROK,
+    gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
+    State;
+   
+
+proceed_data(trx, #state{} = State, #pdu{} = Pdu) ->
+    proceed_trx(State, Pdu);
+proceed_data(tx, #state{} = State, #pdu{} = Pdu) ->
+    proceed_tx(State, Pdu);
+proceed_data(rx, #state{} = State, #pdu{} = Pdu) ->
+    proceed_rx(State, Pdu).
+
+
+
+
+
+
+
+proceed_trx(#state{}, #pdu{}) ->
+    ok.
+
+
+proceed_tx(#state{}, #pdu{}) ->
+    ok.
+
+
+proceed_rx(#state{}, #pdu{}) ->
+    ok.
+
+
+
+
+start_el_timer(#state{el_timer = Timer, connection = #smpp_entity{el_interval = Interval}} = State) when Timer /= undefined->
+    erlang:cancel_timer(Timer),
+    NewTimer = erlang:send_after(Interval, self(), enquire_link),
+    State#state{el_timer = NewTimer};
+
+start_el_timer(#state{connection = #smpp_entity{el_interval = Interval}} = State) ->
+    Timer = erlang:send_after(Interval, self(), enquire_link),
+    State#state{el_timer = Timer}.
+
+
