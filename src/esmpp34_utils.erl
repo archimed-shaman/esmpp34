@@ -82,20 +82,20 @@ resolver_dns(Host) ->
 
 
 
-proceed_data(_, #state{response_timers = Timers} = State, #pdu{sequence_number = Seq,
-							   body = #enquire_link_resp{}}) ->
+proceed_data(_, #state{response_timers = Timers} = State, #pdu{sequence_number = Seq, body = #enquire_link_resp{}}) ->
     NewTimers = cancel_timeout(Seq, Timers),
     io:format("Received enquire_link_resp~n"),
     start_el_timer(State#state{response_timers = NewTimers});
 
 proceed_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq,
-							       body = #enquire_link{}}) ->
+						      body = #enquire_link{}}) ->
     %% TODO: cancel enquire_link timer
     io:format("Received enquire_link_req~n"),
     Resp = #enquire_link_resp{},
     Code = ?ESME_ROK,
     gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
-    State;
+    start_el_timer(State);
+
    
 
 proceed_data(trx, #state{} = State, #pdu{} = Pdu) ->
@@ -111,16 +111,16 @@ proceed_data(rx, #state{} = State, #pdu{} = Pdu) ->
 
 
 
-proceed_trx(#state{}, #pdu{}) ->
-    ok.
+proceed_trx(#state{} = State, #pdu{}) ->
+    State.
 
 
-proceed_tx(#state{}, #pdu{}) ->
-    ok.
+proceed_tx(#state{} = State, #pdu{}) ->
+    State.
 
 
-proceed_rx(#state{}, #pdu{}) ->
-    ok.
+proceed_rx(#state{} = State, #pdu{}) ->
+    State.
 
 
 
