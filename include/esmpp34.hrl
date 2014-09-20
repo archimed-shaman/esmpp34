@@ -55,5 +55,6 @@
                        password            :: string(),
                        allowed_modes = []  :: modes(),
                        outbind             :: #outbind_field{},
-                       el_interval = 60000 :: non_neg_integer() }).
+                       el_interval = 60000 :: non_neg_integer(),
+                       ctrl_pid            :: pid() }).
 -endif.

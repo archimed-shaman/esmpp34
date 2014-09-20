@@ -57,7 +57,8 @@
                  tx :: pid(),
                  tx_ref,
                  rx :: pid(),
-                 rx_ref }).
+                 rx_ref,
+                 ctrl_ref }).
 
 
 
@@ -101,15 +102,16 @@ register_connection(DirPid, Mode, Pid) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec(init(Args :: term()) ->
-             {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
-             {stop, Reason :: term()} | ignore).
+-spec init(Args :: term()) ->
+                  {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
+                  {stop, Reason :: term()} | ignore.
 
 init(Args) ->
     Direction = proplists:get_value(dir, Args),
     io:format("Direction #~p started~n", [Direction#smpp_entity.id]),
+    MonitorRef = erlang:monitor(process, Direction#smpp_entity.ctrl_pid),
     erlang:send_after(1, self(), register),
-    {ok, #state{dir = Direction}}.
+    {ok, #state{dir = Direction, ctrl_ref = MonitorRef}}.
 
 
 
@@ -139,8 +141,9 @@ handle_call({register_connection, rx, Pid}, _From, #state{rx = Rx, rx_ref = RxRe
     Ref = erlang:monitor(process, Pid),
     {reply, {ok, self()}, State#state{rx = Pid, rx_ref = Ref}};
 
-handle_call({register_connection, trx, Pid}, _From, #state{tx = Tx, rx = Rx, tx_ref = TxRef, rx_ref = RxRef} = State)  when Tx == undefined, TxRef == undefined,
-                                                                                                                            Rx == undefined, RxRef == undefined ->
+handle_call({register_connection, trx, Pid}, _From, #state{tx = Tx, tx_ref = TxRef,
+                                                           rx = Rx, rx_ref = RxRef} = State)  when Tx == undefined, TxRef == undefined,
+                                                                                                   Rx == undefined, RxRef == undefined ->
     io:format("Dir ~p registers ~p, Tx: ~p, Rx: ~p, TxRef: ~p, RxRef: ~p ~n", [self(), Pid, Tx, Rx, TxRef, RxRef]),
     Ref = erlang:monitor(process, Pid),
     {reply, {ok, self()}, State#state{tx = Pid, rx = Pid, rx_ref = Ref, tx_ref = Ref}};
@@ -154,7 +157,6 @@ handle_call({register_connection, _, _Pid}, _From, #state{} = State) ->
 %% @private
 %% @doc
 %% Handling cast messages
-%%
 %% @end
 %%--------------------------------------------------------------------
 
@@ -172,10 +174,6 @@ handle_cast(_Request, State) ->
 %% @private
 %% @doc
 %% Handling all non call/cast messages
-%%
-%% @spec handle_info(Info, State) -> {noreply, State} |
-%%                                   {noreply, State, Timeout} |
-%%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
 
@@ -189,21 +187,25 @@ handle_info(register, #state{dir = Direction} = State) ->
     io:format("Direction #~p: trying to register: ~p~n",[Direction#smpp_entity.id, Res]),
     {noreply, State};
 
-%% TODO: handle, when connection is down
-handle_info({'DOWN', MonitorRef, process, DownPid, _}, #state{tx = Tx, rx = Rx, tx_ref = TxRef, rx_ref = RxRef} = State) when DownPid == Tx,
-                                                                                                                              DownPid == Rx,
-                                                                                                                              MonitorRef == TxRef,
-                                                                                                                              MonitorRef == RxRef ->
+handle_info({'DOWN', MonitorRef, process, DownPid, _},
+            #state{tx = Tx, rx = Rx, tx_ref = TxRef, rx_ref = RxRef} = State) when DownPid == Tx, MonitorRef == TxRef,
+                                                                                   DownPid == Rx, MonitorRef == RxRef ->
     {noreply, State#state{tx = undefined, rx = undefined, tx_ref = undefined, rx_ref = undefined}};
 
-handle_info({'DOWN', MonitorRef, process, DownPid, _}, #state{tx = Tx, tx_ref = TxRef} = State) when DownPid == Tx,
-                                                                                                     MonitorRef == TxRef ->
+handle_info({'DOWN', MonitorRef, process, DownPid, _},
+            #state{tx = Tx, tx_ref = TxRef} = State) when DownPid == Tx, MonitorRef == TxRef ->
     {noreply, State#state{tx = undefined, tx_ref = undefined}};
 
-handle_info({'DOWN', MonitorRef, process, DownPid, _}, #state{rx = Rx, rx_ref = RxRef} = State) when DownPid == Rx,
-                                                                                                     MonitorRef == RxRef ->
+handle_info({'DOWN', MonitorRef, process, DownPid, _},
+            #state{rx = Rx, rx_ref = RxRef} = State) when DownPid == Rx, MonitorRef == RxRef ->
     {noreply, State#state{rx = undefined, rx_ref = undefined}};
 
+%% FIXME: the direction will be restarted with the same pid, fix it
+handle_info({'DOWN', MonitorRef, process, DownPid, Reason},
+            #state{ctrl_ref = CtrlRef, dir = #smpp_entity{ctrl_pid = CtrlPid}}) when MonitorRef == CtrlRef, DownPid == CtrlPid ->
+    {stop, {ctrl_pid_down, Reason}};
+
+%% TODO: remove this, let it fall
 handle_info(Info, State) ->
     io:format("~p: ~p~n", [?MODULE, Info]),
     {noreply, State}.
@@ -217,8 +219,6 @@ handle_info(Info, State) ->
 %% terminate. It should be the opposite of Module:init/1 and do any
 %% necessary cleaning up. When it returns, the gen_server terminates
 %% with Reason. The return value is ignored.
-%%
-%% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
 

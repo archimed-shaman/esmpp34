@@ -110,22 +110,31 @@ parse_config([Head | Tail], Config) ->
 
 parse_entity([], #smpp_entity{} = Entity) ->
     Entity;
+
 parse_entity([{id, Id} | Tail], #smpp_entity{} = Entity) ->
     parse_entity(Tail, Entity#smpp_entity{id = Id});
+
 parse_entity([{type, Type} | Tail], #smpp_entity{} = Entity) when Type == esme; Type == smsc ->
     parse_entity(Tail, Entity#smpp_entity{type = Type});
+
 parse_entity([{system_id, SystemId} | Tail], #smpp_entity{} = Entity) ->
     parse_entity(Tail, Entity#smpp_entity{system_id = SystemId});
+
 parse_entity([{password, Password} | Tail], #smpp_entity{} = Entity) ->
     parse_entity(Tail, Entity#smpp_entity{password = Password});
+
 parse_entity([{host, Host} | Tail], #smpp_entity{} = Entity) ->
     parse_entity(Tail, Entity#smpp_entity{host = Host});
+
 parse_entity([{port, Port} | Tail], #smpp_entity{} = Entity) ->
     parse_entity(Tail, Entity#smpp_entity{port = Port});
+
 parse_entity([{allowed_modes, AllowedModes} | Tail], #smpp_entity{} = Entity) ->
     parse_entity(Tail, Entity#smpp_entity{allowed_modes = [X || X <- AllowedModes, X == tx orelse X == rx orelse X == trx]});
+
 parse_entity([{outbind, Outbind} | Tail], #smpp_entity{} = Entity) ->
     parse_entity(Tail, Entity#smpp_entity{outbind = parse_outbind(Outbind)});
+
 parse_entity([_ | Tail], #smpp_entity{} = Entity) ->
     %% TODO: warning for unknown field
     parse_entity(Tail, Entity#smpp_entity{}).
@@ -138,12 +147,16 @@ parse_outbind(Data) ->
 
 parse_outbind([], #outbind_field{} = Outbind) ->
   Outbind;
+
 parse_outbind([{system_id, SystemId} | Tail], #outbind_field{} = Outbind) ->
     parse_outbind(Tail, Outbind#outbind_field{system_id = SystemId});
+
 parse_outbind([{password, Password} | Tail], #outbind_field{} = Outbind) ->
     parse_outbind(Tail, Outbind#outbind_field{password = Password});
+
 parse_outbind([{host, Host} | Tail], #outbind_field{} = Outbind) ->
     parse_outbind(Tail, Outbind#outbind_field{host = Host});
+
 parse_outbind([{port, Port} | Tail], #outbind_field{} = Outbind) ->
   parse_outbind(Tail, Outbind#outbind_field{port = Port}).
 
