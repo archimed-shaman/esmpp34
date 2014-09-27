@@ -57,8 +57,7 @@
                  tx :: pid(),
                  tx_ref,
                  rx :: pid(),
-                 rx_ref,
-                 ctrl_ref }).
+                 rx_ref }).
 
 
 
@@ -109,9 +108,8 @@ register_connection(DirPid, Mode, Pid) ->
 init(Args) ->
     Direction = proplists:get_value(dir, Args),
     io:format("Direction #~p started~n", [Direction#smpp_entity.id]),
-    MonitorRef = erlang:monitor(process, Direction#smpp_entity.ctrl_pid),
     erlang:send_after(1, self(), register),
-    {ok, #state{dir = Direction, ctrl_ref = MonitorRef}}.
+    {ok, #state{dir = Direction}}.
 
 
 
@@ -149,7 +147,15 @@ handle_call({register_connection, trx, Pid}, _From, #state{tx = Tx, tx_ref = TxR
     {reply, {ok, self()}, State#state{tx = Pid, rx = Pid, rx_ref = Ref, tx_ref = Ref}};
 
 handle_call({register_connection, _, _Pid}, _From, #state{} = State) ->
-    {reply, {error, already_bound}, State}.
+    {reply, {error, already_bound}, State};
+
+handle_call({receive_data, Pdu}, _From, #state{dir = #smpp_entity{ctrl_process = Process}} = State) ->
+    case whereis(Process) of
+        undefined ->
+            {reply, {error, no_receiver}, State};
+        Pid ->
+            Pid ! Pdu
+    end.
 
 
 
@@ -199,11 +205,6 @@ handle_info({'DOWN', MonitorRef, process, DownPid, _},
 handle_info({'DOWN', MonitorRef, process, DownPid, _},
             #state{rx = Rx, rx_ref = RxRef} = State) when DownPid == Rx, MonitorRef == RxRef ->
     {noreply, State#state{rx = undefined, rx_ref = undefined}};
-
-%% FIXME: the direction will be restarted with the same pid, fix it
-handle_info({'DOWN', MonitorRef, process, DownPid, Reason},
-            #state{ctrl_ref = CtrlRef, dir = #smpp_entity{ctrl_pid = CtrlPid}}) when MonitorRef == CtrlRef, DownPid == CtrlPid ->
-    {stop, {ctrl_pid_down, Reason}};
 
 %% TODO: remove this, let it fall
 handle_info(Info, State) ->

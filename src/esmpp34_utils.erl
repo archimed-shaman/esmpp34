@@ -304,7 +304,7 @@ send_trx(State, Body, Status) ->
 
 
 proceed_trx(#state{dir_pid = Pid} = State, #pdu{} = Pdu) ->
-    gen_server:call(Pid, Pdu), %% FIXME: handle data in direction
+    gen_server:call(Pid, {receive_data, Pdu}), %% FIXME: handle data in direction
     State.
 
 
