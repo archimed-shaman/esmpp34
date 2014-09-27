@@ -42,7 +42,9 @@
          cancel_timeout/2,
          reason2code/1,
          resolver/1,
-	 proceed_data/3,
+         send_data/3,
+         send_data/4,
+	 receive_data/3,
 	 start_el_timer/1
         ]).
 
@@ -119,19 +121,19 @@ resolver(Host) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec proceed_data(Mode, State, Pdu) -> NewState when
+-spec receive_data(Mode, State, Pdu) -> NewState when
       Mode :: tx | rx | trx,
       State :: #state{},
       Pdu :: #pdu{},
       NewState :: #state{}.
 
 
-proceed_data(_, #state{response_timers = Timers} = State, #pdu{sequence_number = Seq, body = #enquire_link_resp{}}) ->
+receive_data(_, #state{response_timers = Timers} = State, #pdu{sequence_number = Seq, body = #enquire_link_resp{}}) ->
     NewTimers = cancel_timeout(Seq, Timers),
     io:format("Received enquire_link_resp~n"),
     start_el_timer(State#state{response_timers = NewTimers});
 
-proceed_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #enquire_link{}}) ->
+receive_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #enquire_link{}}) ->
     %% TODO: cancel enquire_link timer
     io:format("Received enquire_link_req~n"),
     Resp = #enquire_link_resp{},
@@ -139,43 +141,112 @@ proceed_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, bod
     gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
     start_el_timer(State);
 
-proceed_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #unbind{}}) ->
+receive_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #unbind{}}) ->
     %% TODO: stop
     Resp = #unbind_resp{},
     Code = ?ESME_ROK,
     gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
     State;
 
-proceed_data(_, #state{} = State, #pdu{body = #unbind_resp{}}) ->
+receive_data(_, #state{} = State, #pdu{body = #unbind_resp{}}) ->
     %% TODO: stop
     State;
 
-proceed_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #bind_transmitter{}}) ->
+receive_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #bind_transmitter{}}) ->
     Resp = #bind_transmitter_resp{},
     Code = ?ESME_RALYBND,
     gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
     State;
 
-proceed_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #bind_receiver{}}) ->
+receive_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #bind_receiver{}}) ->
     Resp = #bind_receiver_resp{},
     Code = ?ESME_RALYBND,
     gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
     State;
 
-proceed_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #bind_transceiver{}}) ->
+receive_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #bind_transceiver{}}) ->
     Resp = #bind_transceiver_resp{},
     Code = ?ESME_RALYBND,
     gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
     State;
 
-proceed_data(trx, #state{} = State, #pdu{} = Pdu) ->
-    proceed_trx(State, Pdu);
+receive_data(trx, #state{response_timers = Timers} = State, #pdu{sequence_number = Seq, body = Body} = Pdu) ->
+    NewTimers = case is_response(Body) of
+                    true ->
+                        cancel_timeout(Seq, Timers);
+                    false ->
+                        Timers
+                end,
+    proceed_trx(State#state{response_timers = NewTimers}, Pdu);
 
-proceed_data(tx, #state{} = State, #pdu{} = Pdu) ->
-    proceed_tx(State, Pdu);
+receive_data(tx, #state{response_timers = Timers} = State, #pdu{sequence_number = Seq, body = Body} = Pdu) ->
+    NewTimers = case is_response(Body) of
+                    true ->
+                        cancel_timeout(Seq, Timers);
+                    false ->
+                        Timers
+                end,
+    receive_tx(State#state{response_timers = NewTimers}, Pdu);
 
-proceed_data(rx, #state{} = State, #pdu{} = Pdu) ->
-    proceed_rx(State, Pdu).
+receive_data(rx, #state{response_timers = Timers} = State, #pdu{sequence_number = Seq, body = Body} = Pdu) ->
+    NewTimers = case is_response(Body) of
+                    true ->
+                        cancel_timeout(Seq, Timers);
+                    false ->
+                        Timers
+                end,
+    receive_rx(State#state{response_timers = NewTimers}, Pdu).
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Handles common PDUs and transfer others to the appropriate
+%% bind state handlers
+%% @end
+%%--------------------------------------------------------------------
+
+-spec send_data(Mode, State1, Body) -> State2 when
+      Mode :: tx | rx | trx,
+      State1 :: #state{},
+      Body :: pdu_body(),
+      State2 :: #state{}.
+
+                
+send_data(tx, #state{} = State, Body) ->
+    send_tx(State, Body, ?ESME_ROK);
+
+send_data(rx, #state{} = State, Body) ->
+    send_rx(State, Body, ?ESME_ROK);
+
+send_data(trx, #state{} = State, Body) ->
+    send_trx(State, Body, ?ESME_ROK).
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Handles common PDUs and transfer others to the appropriate
+%% bind state handlers
+%% @end
+%%--------------------------------------------------------------------
+
+-spec send_data(Mode, State1, Body, Status) -> State2 when
+      Mode :: tx | rx | trx,
+      State1 :: #state{},
+      Body :: pdu_body(),
+      Status :: non_neg_integer(),
+      State2 :: #state{}.
+
+                
+send_data(tx, #state{} = State, Body, Status) ->
+    send_tx(State, Body, Status);
+
+send_data(rx, #state{} = State, Body, Status) ->
+    send_rx(State, Body, Status);
+
+send_data(trx, #state{} = State, Body, Status) ->
+    send_trx(State, Body, Status).
 
 
 
@@ -205,6 +276,20 @@ start_el_timer(#state{connection = #smpp_entity{el_interval = Interval}} = State
 %%% Internal functions
 %%%===================================================================
 
+
+
+send_tx(State, Body, Status) ->
+    State.
+
+send_rx(State, Body, Status) ->
+    State.
+
+send_trx(State, Body, Status) ->
+    State.
+    
+
+
+
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -232,13 +317,25 @@ proceed_trx(#state{dir_pid = Pid} = State, #pdu{} = Pdu) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec proceed_tx(State, Pdu) -> NewState when
+-spec receive_tx(State, Pdu) -> NewState when
       State :: #state{},
       Pdu :: #pdu{},
       NewState :: #state{}.
 
 
-proceed_tx(#state{} = State, #pdu{}) ->
+receive_tx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #deliver_sm{}}) ->
+    Resp = #generic_nack{},
+    Code = ?ESME_RINVBNDSTS,
+    gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
+    State;
+
+receive_tx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #alert_notification{}}) ->
+    Resp = #generic_nack{},
+    Code = ?ESME_RINVBNDSTS,
+    gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
+    State;
+
+receive_tx(#state{} = State, #pdu{}) ->
     State.
 
 
@@ -251,13 +348,13 @@ proceed_tx(#state{} = State, #pdu{}) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec proceed_rx(State, Pdu) -> NewState when
+-spec receive_rx(State, Pdu) -> NewState when
       State :: #state{},
       Pdu :: #pdu{},
       NewState :: #state{}.
 
 
-proceed_rx(#state{} = State, #pdu{}) ->
+receive_rx(#state{} = State, #pdu{}) ->
     State.
 
 
@@ -322,5 +419,55 @@ resolver_dns(Host) ->
         [IP | _] -> {ok, IP};
         [] -> {error, unable_resolve}
     end.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Determines, if the PDU is a response
+%% @end
+%%--------------------------------------------------------------------
+
+-spec is_response(PDU) -> boolean() when
+      PDU :: pdu_body().
+
+
+is_response(#bind_receiver_resp{}) ->
+    true;
+is_response(#bind_transmitter_resp{}) ->
+    true;
+is_response(#bind_transceiver_resp{}) ->
+    true;
+is_response(#unbind_resp{}) ->
+    true;
+is_response(#submit_sm_resp{}) ->
+    true;
+is_response(#submit_multi_resp{}) ->
+    true;
+is_response(#data_sm_resp{}) ->
+    true;
+is_response(#deliver_sm_resp{}) ->
+    true;
+is_response(#query_sm_resp{}) ->
+    true;
+is_response(#cancel_sm_resp{}) ->
+    true;
+is_response(#replace_sm_resp{}) ->
+    true;
+is_response(#enquire_link_resp{}) ->
+    true;
+is_response(_) ->
+    false.
+
+
+
+
+
+
+
+
+
+
 
 

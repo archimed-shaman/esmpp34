@@ -119,7 +119,7 @@ bound_trx(enquire_link, #state{socket = Socket, seq = Seq, response_timers = Tim
     {next_state, bound_trx, State#state{response_timers = NewTimers, seq = Seq + 1}};
 
 bound_trx({data, Pdus, _}, #state{} = State) ->
-    NewState = lists:foldl(fun(Value, Acc) -> esmpp34_utils:proceed_data(trx, Acc, Value) end, State, Pdus),
+    NewState = lists:foldl(fun(Value, Acc) -> esmpp34_utils:receive_data(trx, Acc, Value) end, State, Pdus),
     %% TODO: handle packets to change state
     {next_state, bound_trx, NewState}.
     
