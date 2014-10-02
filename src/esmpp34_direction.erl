@@ -35,7 +35,8 @@
 
 %% API
 -export([ start_link/1,
-          register_connection/3 ]).
+          register_connection/3,
+          get_data/1 ]).
 
 %% gen_server callbacks
 -export([ init/1,
@@ -48,7 +49,7 @@
 
 
 -include("esmpp34.hrl").
-
+-include_lib("esmpp34raw/include/esmpp34raw_types.hrl").
 
 
 -define(SERVER, ?MODULE).
@@ -57,7 +58,8 @@
                  tx :: pid(),
                  tx_ref,
                  rx :: pid(),
-                 rx_ref }).
+                 rx_ref,
+                 pdu_buffer = [] }).
 
 
 
@@ -71,17 +73,44 @@
 %% @end
 %%--------------------------------------------------------------------
 
--spec(start_link(#smpp_entity{}) ->
-             {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
+-spec start_link(#smpp_entity{}) ->
+                        {ok, Pid :: pid()} | ignore | {error, Reason :: term()}.
 
 start_link(#smpp_entity{} = Dir) ->
     gen_server:start_link(?MODULE, [{dir, Dir}], []).
 
 
 
+%%--------------------------------------------------------------------
+%% @doc
+%% Registers the connection in direction as receiver, transmitter, or
+%% trensceiver. Returns the pid of direcion, or error.
+%% @end
+%%--------------------------------------------------------------------
+
+-spec register_connection(DirPid, Mode, Pid) -> Result when
+      DirPid :: pid(),
+      Mode :: tx | rx | trx,
+      Pid :: pid(),
+      Result :: {ok, pid()} | {error, already_bound}.
 
 register_connection(DirPid, Mode, Pid) ->
     gen_server:call(DirPid, {register_connection, Mode, Pid}).
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Returns the 
+%% @end
+%%--------------------------------------------------------------------
+
+-spec get_data(DirPid) -> {ok, PduList} when
+      DirPid :: pid(),
+      PduList :: [] | [#pdu{}].
+
+get_data(DirPid) ->
+    gen_server:call(DirPid, get_data).
 
 
 
@@ -149,13 +178,12 @@ handle_call({register_connection, trx, Pid}, _From, #state{tx = Tx, tx_ref = TxR
 handle_call({register_connection, _, _Pid}, _From, #state{} = State) ->
     {reply, {error, already_bound}, State};
 
-handle_call({receive_data, Pdu}, _From, #state{dir = #smpp_entity{ctrl_process = Process}} = State) ->
-    case whereis(Process) of
-        undefined ->
-            {reply, {error, no_receiver}, State};
-        Pid ->
-            Pid ! Pdu
-    end.
+handle_call({receive_data, Pdu}, _From, #state{pdu_buffer = PDUBuffer} = State) ->
+    %% TODO: receive pdus as list
+    {reply, ok, State#state{pdu_buffer = PDUBuffer ++ [Pdu]}};
+
+handle_call(get_data, _From, #state{pdu_buffer = PDUBuffer} = State) ->
+    {reply, {ok, PDUBuffer}, State#state{pdu_buffer = []}}.
 
 
 

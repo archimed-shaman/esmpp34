@@ -177,7 +177,7 @@ receive_data(trx, #state{response_timers = Timers} = State, #pdu{sequence_number
                     false ->
                         Timers
                 end,
-    proceed_trx(State#state{response_timers = NewTimers}, Pdu);
+    receive_trx(State#state{response_timers = NewTimers}, Pdu);
 
 receive_data(tx, #state{response_timers = Timers} = State, #pdu{sequence_number = Seq, body = Body} = Pdu) ->
     NewTimers = case is_response(Body) of
@@ -297,13 +297,13 @@ send_trx(State, Body, Status) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec proceed_trx(State, Pdu) -> NewState when
+-spec receive_trx(State, Pdu) -> NewState when
       State :: #state{},
       Pdu :: #pdu{},
       NewState :: #state{}.
 
 
-proceed_trx(#state{dir_pid = Pid} = State, #pdu{} = Pdu) ->
+receive_trx(#state{dir_pid = Pid} = State, #pdu{} = Pdu) ->
     gen_server:call(Pid, {receive_data, Pdu}), %% FIXME: handle data in direction
     State.
 
@@ -329,13 +329,18 @@ receive_tx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #
     gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
     State;
 
+receive_tx(#state{} = State, #pdu{body = #deliver_sm_resp{}}) ->
+    %% it is not request, do nothing
+    State;
+
 receive_tx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #alert_notification{}}) ->
     Resp = #generic_nack{},
     Code = ?ESME_RINVBNDSTS,
     gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
     State;
 
-receive_tx(#state{} = State, #pdu{}) ->
+receive_tx(#state{dir_pid = Pid} = State, #pdu{} = Pdu) ->
+    gen_server:call(Pid, {receive_data, Pdu}),
     State.
 
 
