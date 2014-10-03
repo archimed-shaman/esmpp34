@@ -37,11 +37,14 @@
 %% API
 -export([
          start/1,
-         get_data/1
+         get_data/1,
+         send_data/2,
+         send_data/3,
+         send_data/4
         ]).
 
 
-%% TODO: write spec an @doc
+%% TODO: write spec and @doc
 
 start(ConfigGetter) when is_function(ConfigGetter) ->
     %% FIXME: match ok results
@@ -54,19 +57,88 @@ start(ConfigGetter) when is_function(ConfigGetter) ->
 %%--------------------------------------------------------------------
 %% @doc
 %% Get all PDUs, received by the direction
- %% @end
- %%--------------------------------------------------------------------
+%% @end
+%%--------------------------------------------------------------------
 
- -spec get_data(DirectionId) -> {ok, Data} | {error, Error} when
-       DirectionId :: non_neg_integer(),
-       Data :: [] | [#pdu{}],
-       Error :: any().
+-spec get_data(DirectionId) -> {ok, Data} | {error, Error} when
+      DirectionId :: non_neg_integer(),
+      Data :: [] | [#pdu{}],
+      Error :: any().
 
 
 get_data(DirectionId) ->
     case esmpp34_manager:get_direction_pid(DirectionId) of
         {ok, Pid} ->
             esmpp34_direction:get_data(Pid);
+        {error, _} = Error ->
+            Error
+    end.
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Send PDU
+%% @end
+%%--------------------------------------------------------------------
+
+-spec send_data(DirectionId, Pdu) -> ok | {error, Error} when
+      DirectionId :: non_neg_integer(),
+      Pdu :: pdu_body(),
+      Error :: any().
+
+
+send_data(DirectionId, Pdu) ->
+    case esmpp34_manager:get_direction_pid(DirectionId) of
+        {ok, Pid} ->
+            esmpp34_direction:send_data(Pid, Pdu);
+        {error, _} = Error ->
+            Error
+    end.
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Send PDU
+%% @end
+%%--------------------------------------------------------------------
+
+-spec send_data(DirectionId, Pdu, Sequence) -> ok | {error, Error} when
+      DirectionId :: non_neg_integer(),
+      Pdu :: pdu_body(),
+      Sequence :: non_neg_integer(),
+      Error :: any().
+
+
+send_data(DirectionId, Pdu, Sequence) ->
+    case esmpp34_manager:get_direction_pid(DirectionId) of
+        {ok, Pid} ->
+            esmpp34_direction:send_data(Pid, Pdu, Sequence);
+        {error, _} = Error ->
+            Error
+    end.
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Send PDU
+%% @end
+%%--------------------------------------------------------------------
+
+-spec send_data(DirectionId, Pdu, Sequence, Status) -> ok | {error, Error} when
+      DirectionId :: non_neg_integer(),
+      Pdu :: pdu_body(),
+      Sequence :: non_neg_integer(),
+      Status :: non_neg_integer(),
+      Error :: any().
+
+
+send_data(DirectionId, Pdu, Sequence, Status) ->
+    case esmpp34_manager:get_direction_pid(DirectionId) of
+        {ok, Pid} ->
+            esmpp34_direction:send_data(Pid, Pdu, Sequence, Status);
         {error, _} = Error ->
             Error
     end.

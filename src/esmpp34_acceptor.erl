@@ -1,13 +1,36 @@
 %%%-------------------------------------------------------------------
-%%% @author morozov
-%%% @copyright (C) 2014, <COMPANY>
+%%% @author Alexander Morozov aka ~ArchimeD~
+%%% @copyright 2014, Alexander Morozov
 %%% @doc
-%%%
+%%% Handler for accepted connections
 %%% @end
-%%% Created : 29. Авг. 2014 13:39
+%%%
+%%% The MIT License (MIT)
+%%%
+%%% Copyright (c) 2014 Alexander Morozov
+%%%
+%%% Permission is hereby granted, free of charge, to any person obtaining a copy
+%%% of this software and associated documentation files (the "Software"), to deal
+%%% in the Software without restriction, including without limitation the rights
+%%% to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+%%% copies of the Software, and to permit persons to whom the Software is
+%%% furnished to do so, subject to the following conditions:
+%%%
+%%% The above copyright notice and this permission notice shall be included in all
+%%% copies or substantial portions of the Software.
+%%%
+%%% THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+%%% IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+%%% FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+%%% AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+%%% LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+%%% OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+%%% SOFTWARE.
 %%%-------------------------------------------------------------------
+
 -module(esmpp34_acceptor).
--author("morozov").
+-author("Alexander Morozov aka ~ArchimeD~").
+
 
 -include("esmpp34.hrl").
 -include("esmpp34_defs.hrl").
@@ -17,18 +40,23 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/3]).
+-export([
+         start_link/3
+        ]).
 
 %% gen_fsm callbacks
--export([ init/1,
-          open/2,
-	  bound_trx/2,
-          state_name/3,
-          handle_event/3,
-          handle_sync_event/4,
-          handle_info/3,
-          terminate/3,
-          code_change/4 ]).
+-export([
+         init/1,
+         open/2,
+         bound_trx/2,
+         bound_trx/3,
+         state_name/3,
+         handle_event/3,
+         handle_sync_event/4,
+         handle_info/3,
+         terminate/3,
+         code_change/4
+        ]).
 
 -define(SERVER, ?MODULE).
 
@@ -111,15 +139,16 @@ open({data, [Head | _], []}, #state{socket = Socket} = State) ->
 
 
 bound_trx(enquire_link, #state{socket = Socket, seq = Seq, response_timers = Timers} = State) ->
+    NewState = esmpp34_utils:start_el_timer(State),
     Req = #enquire_link{},
     Code = ?ESME_ROK,
     gen_tcp:send(Socket, esmpp34raw:pack_single(Req, Code, Seq)),
     Timer = erlang:send_after(30000, self(), {timeout, Seq, enquire_link}), %% TODO: interval from config
     NewTimers = dict:store(Seq, Timer, Timers),
-    {next_state, bound_trx, State#state{response_timers = NewTimers, seq = Seq + 1}};
+    {next_state, bound_trx, NewState#state{response_timers = NewTimers, seq = Seq + 1}};
 
 bound_trx({data, Pdus, _}, #state{} = State) ->
-    NewState = lists:foldl(fun(Value, Acc) -> esmpp34_utils:receive_data(trx, Acc, Value) end, State, Pdus),
+    NewState = lists:foldl(fun(Value, Acc) -> esmpp34_utils:receive_data(trx, Acc, Value) end, esmpp34_utils:start_el_timer(State), Pdus),
     %% TODO: handle packets to change state
     {next_state, bound_trx, NewState}.
     
@@ -136,6 +165,33 @@ bound_trx({data, Pdus, _}, #state{} = State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+
+
+bound_trx({send, Pdu}, _From, #state{seq = Seq} = State) ->
+    case esmpp34_utils:send_data(trx, State#state{seq = Seq + 1}, Pdu, Seq) of
+        {ok, NewState} ->
+            {reply, ok, bound_trx, NewState};
+        {error, _} = E ->
+            {reply, E, bound_trx, State}
+    end;
+
+bound_trx({send, Pdu, Sequence}, _From, #state{} = State) ->
+    case esmpp34_utils:send_data(trx, State, Pdu, Sequence) of
+        {ok, NewState} ->
+            {reply, ok, bound_trx, NewState};
+        {error, _} = E ->
+            {reply, E, bound_trx, State}
+    end;
+
+bound_trx({send, Pdu, Sequence, Status}, _From, #state{} = State) ->
+    case esmpp34_utils:send_data(trx, State, Pdu, Sequence, Status) of
+        {ok, NewState} ->
+            {reply, ok, bound_trx, NewState};
+        {error, _} = E ->
+            {reply, E, bound_trx, State}
+    end.
+
+
 
 -spec(state_name(Event :: term(), From :: {pid(), term()},
                  State :: #state{}) ->
@@ -210,7 +266,6 @@ handle_sync_event(_Event, _From, StateName, State) ->
 %% This function is called by a gen_fsm when it receives any
 %% message other than a synchronous or asynchronous event
 %% (or a system message).
-%%
 %% @end
 %%--------------------------------------------------------------------
 
@@ -244,10 +299,6 @@ handle_info({'DOWN', _MonitorRef, process, DownPid, _}, _StateName, #state{dir_p
 
 handle_info(enquire_link, StateName, #state{} = State) ->
     ?MODULE:StateName(enquire_link, State).
-
-
-%% andle_info(_Info, StateName, State) ->
-%%    {next_state, StateName, State}.
 
 
 

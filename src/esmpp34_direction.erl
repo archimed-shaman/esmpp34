@@ -34,17 +34,24 @@
 -behaviour(gen_server).
 
 %% API
--export([ start_link/1,
-          register_connection/3,
-          get_data/1 ]).
+-export([
+         start_link/1,
+         register_connection/3,
+         get_data/1,
+         send_data/2,
+         send_data/3,
+         send_data/4
+        ]).
 
 %% gen_server callbacks
--export([ init/1,
-          handle_call/3,
-          handle_cast/2,
-          handle_info/2,
-          terminate/2,
-          code_change/3 ]).
+-export([
+         init/1,
+         handle_call/3,
+         handle_cast/2,
+         handle_info/2,
+         terminate/2,
+         code_change/3
+        ]).
 
 
 
@@ -69,12 +76,13 @@
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Starts the server
+%% Start the server
 %% @end
 %%--------------------------------------------------------------------
 
 -spec start_link(#smpp_entity{}) ->
                         {ok, Pid :: pid()} | ignore | {error, Reason :: term()}.
+
 
 start_link(#smpp_entity{} = Dir) ->
     gen_server:start_link(?MODULE, [{dir, Dir}], []).
@@ -83,7 +91,7 @@ start_link(#smpp_entity{} = Dir) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Registers the connection in direction as receiver, transmitter, or
+%% Register the connection in direction as receiver, transmitter, or
 %% trensceiver. Returns the pid of direcion, or error.
 %% @end
 %%--------------------------------------------------------------------
@@ -94,6 +102,7 @@ start_link(#smpp_entity{} = Dir) ->
       Pid :: pid(),
       Result :: {ok, pid()} | {error, already_bound}.
 
+
 register_connection(DirPid, Mode, Pid) ->
     gen_server:call(DirPid, {register_connection, Mode, Pid}).
 
@@ -101,7 +110,7 @@ register_connection(DirPid, Mode, Pid) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Returns the 
+%% Return the PDUs received
 %% @end
 %%--------------------------------------------------------------------
 
@@ -109,8 +118,63 @@ register_connection(DirPid, Mode, Pid) ->
       DirPid :: pid(),
       PduList :: [] | [#pdu{}].
 
+
 get_data(DirPid) ->
     gen_server:call(DirPid, get_data).
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Send PDU to the first suitable connection
+%% @end
+%%--------------------------------------------------------------------
+
+-spec send_data(DirPid, Data) -> Resp when
+      DirPid :: pid(),
+      Data :: pdu_body(),
+      Resp :: ok | {error, any()}.
+
+
+send_data(DirPid, Data) ->
+    gen_server:call(DirPid, {send_data, Data}).
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Send PDU to the first suitable connection
+%% @end
+%%--------------------------------------------------------------------
+
+-spec send_data(DirPid, Data, Sequence) -> Resp when
+      DirPid :: pid(),
+      Data :: pdu_body(),
+      Sequence :: non_neg_integer(),
+      Resp :: ok | {error, any()}.
+
+
+send_data(DirPid, Data, Sequence) ->
+    gen_server:call(DirPid, {send_data, Data, Sequence}).
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Send PDU to the first suitable connection
+%% @end
+%%--------------------------------------------------------------------
+
+-spec send_data(DirPid, Data, Sequence, Status) -> Resp when
+      DirPid :: pid(),
+      Data :: pdu_body(),
+      Sequence :: non_neg_integer(),
+      Status :: non_neg_integer(),
+      Resp :: ok | {error, any()}.
+
+
+send_data(DirPid, Data, Sequence, Status) ->
+    gen_server:call(DirPid, {send_data, Data, Sequence, Status}).
 
 
 
@@ -183,7 +247,36 @@ handle_call({receive_data, Pdu}, _From, #state{pdu_buffer = PDUBuffer} = State) 
     {reply, ok, State#state{pdu_buffer = PDUBuffer ++ [Pdu]}};
 
 handle_call(get_data, _From, #state{pdu_buffer = PDUBuffer} = State) ->
-    {reply, {ok, PDUBuffer}, State#state{pdu_buffer = []}}.
+    {reply, {ok, PDUBuffer}, State#state{pdu_buffer = []}};
+
+handle_call({send_data, Data}, _From, #state{tx = Tx, rx = Rx} = State) ->
+    Connections = [Tx , Rx],
+    case lists:dropwhile(fun(Pid) -> gen_fsm:sync_send_event(Pid, {send, Data}) /= ok end, Connections) of
+        [] ->
+            {reply, {error, no_awailable_connections}, State};
+        [_|_] ->
+            {reply, ok, State}
+    end;
+
+handle_call({send_data, Data, Sequence}, _From, #state{tx = Tx, rx = Rx} = State) ->
+    Connections = [Tx , Rx],
+    case lists:dropwhile(fun(Pid) -> gen_fsm:sync_send_event(Pid, {send, Data, Sequence}) /= ok end, Connections) of
+        [] ->
+            {reply, {error, no_awailable_connections}, State};
+        [_|_] ->
+            {reply, ok, State}
+    end;
+
+handle_call({send_data, Data, Sequence, Status}, _From, #state{tx = Tx, rx = Rx} = State) ->
+    Connections = [Tx , Rx],
+    case lists:dropwhile(fun(Pid) -> gen_fsm:sync_send_event(Pid, {send, Data, Sequence, Status}) /= ok end, Connections) of
+        [] ->
+            {reply, {error, no_awailable_connections}, State};
+        [_|_] ->
+            {reply, ok, State}
+    end.
+
+
 
 
 

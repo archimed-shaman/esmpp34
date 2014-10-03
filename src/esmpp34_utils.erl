@@ -40,10 +40,11 @@
 %% API
 -export([
          cancel_timeout/2,
+         run_timer/2,
          reason2code/1,
          resolver/1,
-         send_data/3,
          send_data/4,
+         send_data/5,
 	 receive_data/3,
 	 start_el_timer/1
         ]).
@@ -59,7 +60,8 @@
 %% @end
 %%--------------------------------------------------------------------
 
--spec cancel_timeout(Seq :: non_neg_integer(), Timers :: Dict1) -> NewTimer :: Dict2 when
+-spec cancel_timeout(Seq, Timers :: Dict1) -> NewTimer :: Dict2 when
+      Seq :: non_neg_integer(),
       Dict1 :: dict:dict(Key, Value),
       Dict2 :: dict:dict(Key, Value).
 
@@ -77,20 +79,39 @@ cancel_timeout(Seq, Timers) ->
 
 %%--------------------------------------------------------------------
 %% @doc
+%% Run timer for the specified request
+%% @end
+%%--------------------------------------------------------------------
+
+-spec run_timer(Seq, Timers :: Dict1) -> NewTimers :: Dict2 when
+      Seq :: non_neg_integer(),
+      Dict1 :: dict:dict(Key, Value),
+      Dict2 :: dict:dict(Key, Value).
+
+
+run_timer(Seq, Timers) ->
+    Timer = erlang:send_after(30000, self(), {timeout, Seq}), %% TODO: interval from config
+    dict:store(Seq, Timer, Timers).
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
 %% Return the corresponding SMPP status code
 %% @end
 %%--------------------------------------------------------------------
 
 -spec reason2code(Reason) -> Code when
-      Reason :: ok | system_id | password | already_bound | atom(),
+      Reason :: ok | system_id | password | already_bound | invalid_bind_status | atom(),
       Code :: non_neg_integer().
 
 
-reason2code(ok)            -> ?ESME_ROK;
-reason2code(system_id)     -> ?ESME_RINVSYSID;
-reason2code(password)      -> ?ESME_RINVPASWD;
-reason2code(already_bound) -> ?ESME_RALYBND;
-reason2code(_)             -> ?ESME_RUNKNOWNERR.
+reason2code(ok)                  -> ?ESME_ROK;
+reason2code(system_id)           -> ?ESME_RINVSYSID;
+reason2code(password)            -> ?ESME_RINVPASWD;
+reason2code(already_bound)       -> ?ESME_RALYBND;
+reason2code(invalid_bind_status) -> ?ESME_RINVBNDSTS;
+reason2code(_)                   -> ?ESME_RUNKNOWNERR.
 
 
 
@@ -170,32 +191,28 @@ receive_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, bod
     gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
     State;
 
-receive_data(trx, #state{response_timers = Timers} = State, #pdu{sequence_number = Seq, body = Body} = Pdu) ->
-    NewTimers = case is_response(Body) of
-                    true ->
-                        cancel_timeout(Seq, Timers);
-                    false ->
-                        Timers
-                end,
-    receive_trx(State#state{response_timers = NewTimers}, Pdu);
-
-receive_data(tx, #state{response_timers = Timers} = State, #pdu{sequence_number = Seq, body = Body} = Pdu) ->
-    NewTimers = case is_response(Body) of
-                    true ->
-                        cancel_timeout(Seq, Timers);
-                    false ->
-                        Timers
-                end,
-    receive_tx(State#state{response_timers = NewTimers}, Pdu);
-
-receive_data(rx, #state{response_timers = Timers} = State, #pdu{sequence_number = Seq, body = Body} = Pdu) ->
-    NewTimers = case is_response(Body) of
-                    true ->
-                        cancel_timeout(Seq, Timers);
-                    false ->
-                        Timers
-                end,
-    receive_rx(State#state{response_timers = NewTimers}, Pdu).
+receive_data(Mode, #state{response_timers = Timers,
+                          dir_pid = {Pid, _},
+                          socket = Socket} = State, #pdu{sequence_number = Seq, body = Body} = Pdu) ->
+    IsAllowed = is_allowed(Mode, Body),
+    case is_response(Body) of
+        true when IsAllowed ->
+            %% it is response and it is allowed in current mode; send it to direction
+            NewTimers = cancel_timeout(Seq, Timers),
+            gen_server:call(Pid, {receive_data, Pdu}), %% FIXME: handle data in direction
+            State#state{response_timers = NewTimers};
+        true ->
+            %% it is a response, but it isn't allowed in current mode; do nothing
+            State;
+        false when IsAllowed ->
+            %% it is a request and it is allowed; send it to direction
+            gen_server:call(Pid, {receive_data, Pdu}), %% FIXME: handle data in direction
+            State;
+        _ ->
+            %% all other cases, in fact - disallowed request; reject it
+            reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
+            State
+    end.
 
 
 
@@ -206,21 +223,36 @@ receive_data(rx, #state{response_timers = Timers} = State, #pdu{sequence_number 
 %% @end
 %%--------------------------------------------------------------------
 
--spec send_data(Mode, State1, Body) -> State2 when
+-spec send_data(Mode, State1, Body, Sequence) -> State2 when
       Mode :: tx | rx | trx,
       State1 :: #state{},
       Body :: pdu_body(),
+      Sequence :: non_neg_integer(),
       State2 :: #state{}.
 
-                
-send_data(tx, #state{} = State, Body) ->
-    send_tx(State, Body, ?ESME_ROK);
 
-send_data(rx, #state{} = State, Body) ->
-    send_rx(State, Body, ?ESME_ROK);
-
-send_data(trx, #state{} = State, Body) ->
-    send_trx(State, Body, ?ESME_ROK).
+send_data(Mode, #state{socket = Socket, response_timers = Timers} = State, Body, Sequence) ->
+    IsResponse = is_response(Body),
+    case is_allowed(Mode, Body) of
+        true when IsResponse ->
+            %% It is allowed response, just send
+            io:format("allowed, response~n"),
+            send_smpp(Socket, Body, Sequence),
+            {ok, State};
+        true ->
+            io:format("allowed, request~n"),
+            NewTimers = case send_smpp(Socket, Body, Sequence) of
+                            ok ->
+                                run_timer(Sequence, Timers);
+                            _ ->
+                                %% FIXME: unable send, maybe force disconnect?
+                                Timers
+                        end,
+            {ok, State#state{response_timers = NewTimers}};
+        _ ->
+            io:format("disallowed~n"),
+            {error, invalid_bind_status}
+    end.
 
 
 
@@ -231,22 +263,34 @@ send_data(trx, #state{} = State, Body) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec send_data(Mode, State1, Body, Status) -> State2 when
+-spec send_data(Mode, State1, Body, Sequence, Status) -> State2 when
       Mode :: tx | rx | trx,
       State1 :: #state{},
       Body :: pdu_body(),
+      Sequence :: non_neg_integer(),
       Status :: non_neg_integer(),
       State2 :: #state{}.
 
-                
-send_data(tx, #state{} = State, Body, Status) ->
-    send_tx(State, Body, Status);
 
-send_data(rx, #state{} = State, Body, Status) ->
-    send_rx(State, Body, Status);
-
-send_data(trx, #state{} = State, Body, Status) ->
-    send_trx(State, Body, Status).
+send_data(Mode, #state{socket = Socket, response_timers = Timers} = State, Body, Sequence, Status) ->
+    IsResponse = is_response(Body),
+    case is_allowed(Mode, Body) of
+        true when IsResponse ->
+            %% It is allowed response, just send
+            send_smpp(Socket, Body, Sequence, Status),
+            {ok, State};
+        true ->
+            NewTimers = case send_smpp(Socket, Body, Sequence, Status) of
+                            ok ->
+                                run_timer(Sequence, Timers);
+                            _ ->
+                                %% FIXME: unable send, maybe force disconnect?
+                                Timers
+                        end,
+            {ok, State#state{response_timers = NewTimers}};
+        _ ->
+            {error, invalid_bind_status}
+    end.
 
 
 
@@ -276,136 +320,137 @@ start_el_timer(#state{connection = #smpp_entity{el_interval = Interval}} = State
 %%% Internal functions
 %%%===================================================================
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Check, if PDU is allowed in the specific mode
+%% @end
+%%--------------------------------------------------------------------
+
+-spec is_allowed(Mode, Pdu) -> boolean() when
+      Mode :: tx | rx | trx,
+      Pdu :: #pdu{}.
 
 
-send_tx(State, Body, Status) ->
-    State.
-
-send_rx(State, Body, Status) ->
-    State.
-
-send_trx(State, Body, Status) ->
-    State.
-    
+is_allowed(tx, Pdu) ->
+    is_allowed_tx(Pdu);
+is_allowed(rx, Pdu) ->
+    is_allowed_rx(Pdu);
+is_allowed(trx, Pdu) ->
+    is_allowed_trx(Pdu).
 
 
 
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Handle PDUs in transceiver mode
+%% Check, if PDU is allowed in transceiver mode
 %% @end
 %%--------------------------------------------------------------------
 
--spec receive_trx(State, Pdu) -> NewState when
-      State :: #state{},
-      Pdu :: #pdu{},
-      NewState :: #state{}.
+-spec is_allowed_trx(Pdu) -> boolean() when
+      Pdu :: #pdu{}.
 
 
-receive_trx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #replace_sm{}}) ->
-    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
-    State;
-
-receive_trx(#state{} = State, #pdu{body = #replace_sm_resp{}}) ->
-    %% it is not request, do nothing
-    State;
-
-receive_trx(#state{dir_pid = {Pid, _}} = State, #pdu{} = Pdu) ->
-    gen_server:call(Pid, {receive_data, Pdu}), %% FIXME: handle data in direction
-    State.
+is_allowed_trx(#replace_sm{}) -> %% FIXME: wtf? should be available, maybe  documentation
+    false;
+is_allowed_trx(#replace_sm_resp{}) ->
+    false;
+is_allowed_trx(#bind_receiver{}) ->
+    false;
+is_allowed_trx(#bind_transmitter{}) ->
+    false;
+is_allowed_trx(#bind_transceiver{}) ->
+    false;
+is_allowed_trx(#bind_receiver_resp{}) ->
+    false;
+is_allowed_trx(#bind_transmitter_resp{}) ->
+    false;
+is_allowed_trx(#bind_transceiver_resp{}) ->
+    false;
+is_allowed_trx(_) ->
+    true.
 
 
 
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Reject forbidden PDUs in transmitter mode and transfers others to
-%% direction
+%% Check, if PDU is allowed in transmitter mode
 %% @end
 %%--------------------------------------------------------------------
 
--spec receive_tx(State, Pdu) -> NewState when
-      State :: #state{},
-      Pdu :: #pdu{},
-      NewState :: #state{}.
+-spec is_allowed_tx(Pdu) -> boolean() when
+      Pdu :: #pdu{}.
 
 
-receive_tx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #deliver_sm{}}) ->
-    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
-    State;
-
-receive_tx(#state{} = State, #pdu{body = #deliver_sm_resp{}}) ->
-    %% it is not request, do nothing
-    State;
-
-receive_tx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #alert_notification{}}) ->
-    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
-    State;
-
-receive_tx(#state{dir_pid = {Pid, _}} = State, #pdu{} = Pdu) ->
-    gen_server:call(Pid, {receive_data, Pdu}),
-    State.
-
+is_allowed_tx(#deliver_sm{}) ->
+    false;
+is_allowed_tx(#deliver_sm_resp{}) ->
+    false;
+is_allowed_tx(#alert_notification{}) ->
+    false;
+is_allowed_tx(#bind_receiver{}) ->
+    false;
+is_allowed_tx(#bind_transmitter{}) ->
+    false;
+is_allowed_tx(#bind_transceiver{}) ->
+    false;
+is_allowed_tx(#bind_receiver_resp{}) ->
+    false;
+is_allowed_tx(#bind_transmitter_resp{}) ->
+    false;
+is_allowed_tx(#bind_transceiver_resp{}) ->
+    false;
+is_allowed_tx(_) ->
+    true.
 
 
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Reject forbidden PDUs in receiver mode and transfers others to
-%% direction
+%% Check, if PDU is allowed in receiver mode
 %% @end
 %%--------------------------------------------------------------------
 
--spec receive_rx(State, Pdu) -> NewState when
-      State :: #state{},
-      Pdu :: #pdu{},
-      NewState :: #state{}.
+-spec is_allowed_rx(Pdu) -> boolean() when
+      Pdu :: #pdu{}.
 
 
-receive_rx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #submit_sm{}}) ->
-    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
-    State;
-
-receive_rx(#state{} = State, #pdu{body = #submit_sm_resp{}}) ->
-    %% it is not request, do nothing
-    State;
-
-receive_rx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #submit_multi{}}) ->
-    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
-    State;
-
-receive_rx(#state{} = State, #pdu{body = #submit_multi_resp{}}) ->
-    %% it is not request, do nothing
-    State;
-
-receive_rx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #query_sm{}}) ->
-    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
-    State;
-
-receive_rx(#state{} = State, #pdu{body = #query_sm_resp{}}) ->
-    %% it is not request, do nothing
-    State;
-
-receive_rx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #cancel_sm{}}) ->
-    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
-    State;
-
-receive_rx(#state{} = State, #pdu{body = #cancel_sm_resp{}}) ->
-    %% it is not request, do nothing
-    State;
-
-receive_rx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #replace_sm{}}) ->
-    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
-    State;
-
-receive_rx(#state{} = State, #pdu{body = #replace_sm_resp{}}) ->
-    %% it is not request, do nothing
-    State;
-
-receive_rx(#state{dir_pid = {Pid, _}} = State, #pdu{} = Pdu) ->
-    gen_server:call(Pid, {receive_data, Pdu}),
-    State.
+is_allowed_rx(#submit_sm{}) ->
+    false;
+is_allowed_rx(#submit_sm_resp{}) ->
+    false;
+is_allowed_rx(#submit_multi{}) ->
+    false;
+is_allowed_rx(#submit_multi_resp{}) ->
+    false;
+is_allowed_rx(#query_sm{}) ->
+    false;
+is_allowed_rx(#query_sm_resp{}) ->
+    false;
+is_allowed_rx(#cancel_sm{}) ->
+    false;
+is_allowed_rx(#cancel_sm_resp{}) ->
+    false;
+is_allowed_rx(#replace_sm{}) ->
+    false;
+is_allowed_rx(#replace_sm_resp{}) ->
+    false;
+is_allowed_rx(#bind_receiver{}) ->
+    false;
+is_allowed_rx(#bind_transmitter{}) ->
+    false;
+is_allowed_rx(#bind_transceiver{}) ->
+    false;
+is_allowed_rx(#bind_receiver_resp{}) ->
+    false;
+is_allowed_rx(#bind_transmitter_resp{}) ->
+    false;
+is_allowed_rx(#bind_transceiver_resp{}) ->
+    false;
+is_allowed_rx(_) ->
+    true.
 
 
 
@@ -533,7 +578,41 @@ reject_smpp(Socket, Sequence, Code) ->
 
 
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Send the SMPP PDU to socket. Status is ESME_ROK.
+%% @end
+%%--------------------------------------------------------------------
+
+-spec send_smpp(Socket, Packet, Sequence) -> GenTcpResponse when
+      Socket :: gen_tcp:socket(),
+      Packet :: pdu_body(),
+      Sequence :: non_neg_integer(),
+      GenTcpResponse :: ok | {error, Reason},
+      Reason :: closed | inet:posix().
+
+
+send_smpp(Socket, Packet, Sequence) ->
+    gen_tcp:send(Socket, esmpp34raw:pack_single(Packet, ?ESME_ROK, Sequence)).
 
 
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Send the SMPP PDU with specified status to socket.
+%% @end
+%%--------------------------------------------------------------------
 
+-spec send_smpp(Socket, Packet, Sequence, Status) -> GenTcpResponse when
+      Socket :: gen_tcp:socket(),
+      Packet :: pdu_body(),
+      Sequence :: non_neg_integer(),
+      Status :: non_neg_integer(),
+      GenTcpResponse :: ok | {error, Reason},
+      Reason :: closed | inet:posix().
+
+
+send_smpp(Socket, Packet, Sequence, Status) ->
+    gen_tcp:send(Socket, esmpp34raw:pack_single(Packet, Status, Sequence)).

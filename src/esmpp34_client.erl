@@ -2,7 +2,7 @@
 %%% @author Alexander Morozov aka ~ArchimeD~
 %%% @copyright 2014, Alexander Morozov
 %%% @doc
-%%% The main module
+%%% Client connection handler
 %%% @end
 %%%
 %%% The MIT License (MIT)
