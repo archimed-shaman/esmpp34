@@ -95,3 +95,37 @@ esmpp34_connection_sup:start_connection(Connection).
 
 esmpp34:start(Config).
 esmpp34_server:start_link(Connection).
+
+
+
+
+
+
+
+
+
+
+
+
+code:add_path("../deps/esmpp34raw/ebin").
+rr("../include/esmpp34.hrl").
+rr("../deps/esmpp34raw/include/esmpp34raw_types.hrl").
+Config = fun() ->
+[
+    [
+        {id, 0},
+        {type, smsc},
+        {system_id, "proxy"},
+        {password, "test"},
+        {host, all},
+        {port, 4776},
+        {allowed_modes, [trx]}
+    ]
+]
+end.
+esmpp34:start(Config).
+DirectionId = 0.
+Sender = fun(#pdu{sequence_number = Seq, body = #submit_sm{}}) -> io:format("Received seq~p~n", [Seq]), esmpp34:send_data(DirectionId, #submit_sm_resp{message_id = "123"}, Seq) end.
+Responser = fun({ok, List}) -> lists:foreach(Sender, List) end.
+Loop = fun(F) -> Responser(esmpp34:get_data(DirectionId)), F(F) end.
+Loop(Loop).
