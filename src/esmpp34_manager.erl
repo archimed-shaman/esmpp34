@@ -34,19 +34,24 @@
 -behaviour(gen_server).
 
 %% API
--export([ start_link/1,
-          run_config/0,
-          register_direction/1,
-          register_connection/2,
-          register_connection/4 ]).
+-export([
+         start_link/1,
+         run_config/0,
+         register_direction/1,
+         register_connection/2,
+         register_connection/4,
+         get_direction_pid/1
+        ]).
 
 %% gen_server callbacks
--export([ init/1,
-          handle_call/3,
-          handle_cast/2,
-          handle_info/2,
-          terminate/2,
-          code_change/3 ]).
+-export([
+         init/1,
+         handle_call/3,
+         handle_cast/2,
+         handle_info/2,
+         terminate/2,
+         code_change/3
+        ]).
 
 
 -include("esmpp34.hrl").
@@ -86,6 +91,7 @@
 -spec(start_link(Callback :: fun(() -> list())) ->
              {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 
+
 start_link(Callback) when is_function(Callback) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [{callback, Callback}], []).
 
@@ -97,9 +103,9 @@ start_link(Callback) when is_function(Callback) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec(run_config() ->
-             Rep :: ok
-                  | {error, Error :: term()}).
+-spec run_config() -> Resp when
+      Resp :: ok | {error, Error :: term()}.
+
 
 run_config() ->
     gen_server:call(?SERVER, run_config).
@@ -112,22 +118,65 @@ run_config() ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec(register_direction(Id :: non_neg_integer()) ->
-             Rep :: ok
-                  | {error, Error :: term()}).
+-spec register_direction(Id) -> Resp when
+      Id :: non_neg_integer(),
+      Resp :: ok | {error, Error :: term()}.
+
 
 register_direction(Id) ->
     gen_server:call(?SERVER, {register_direction, Id}).
 
 
 
+%%--------------------------------------------------------------------
+%% @doc
+%% Register outgoing connection
+%% @end
+%%--------------------------------------------------------------------
+
+-spec register_connection(ConnectionId, Mode) -> Resp when
+      ConnectionId :: non_neg_integer(),
+      Mode :: tx | rx | trx,
+      Resp :: ok | {error, Error :: term()}.
+
 
 register_connection(ConnectionId, Mode) ->
     gen_server:call(?SERVER, {register_connection, ConnectionId, Mode}).
 
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Register incoming connection
+%% @end
+%%--------------------------------------------------------------------
+
+-spec register_connection(ConnectionId, Mode, Login, Password) -> Resp when
+      ConnectionId :: non_neg_integer(),
+      Mode :: tx | rx | trx,
+      Login :: string(),
+      Password :: string(),
+      Resp :: ok | {error, Error :: term()}.
+
+
 register_connection(ConnectionId, Mode, Login, Password) ->
     gen_server:call(?SERVER, {register_connection, ConnectionId, Mode, Login, Password}).
 
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Return the pid of the specified direction gen_server
+%% @end
+%%--------------------------------------------------------------------
+
+-spec get_direction_pid(DirectionId) -> Resp when
+      DirectionId :: non_neg_integer(),
+      Resp :: {ok, pid()} | {error, no_direction} | {error, direction_down}.
+
+
+get_direction_pid(DirectionId) ->
+    gen_server:call(?SERVER, {get_direction_pid, DirectionId}).
 
 
 
@@ -169,6 +218,7 @@ init(Args) ->
              {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
              {stop, Reason :: term(), NewState :: #state{}}).
 
+
 handle_call(run_config, _From, #state{callback = Callback, config = OldConfig} = State) ->
     %%     {reply, {error, error}, State};
     io:format("Checking config... ~n"),
@@ -204,7 +254,6 @@ handle_call({register_direction, DirId}, {From, _}, #state{direction_dict = DirD
             {reply, {error, no_direction}, State}
     end;
 
-
 handle_call({register_connection, ConnectionId, Mode}, {From, _}, #state{direction_dict = Directions} = State) ->
     case dict:find(ConnectionId, Directions) of
         {ok, #dir_record{dir = #smpp_entity{}, pid = DirPid}} ->
@@ -232,6 +281,13 @@ handle_call({register_connection, ConnectionId, Mode, RSystemId, RPassword}, {Fr
             {reply, {error, system_id}, State}
     end;
 
+handle_call({get_direction_pid, DirectionId}, _From, #state{direction_dict = Directions} = State) ->
+    case dict:find(DirectionId, Directions) of
+        {ok, #dir_record{pid = DirPid}} ->
+            {reply, {ok, DirPid}, State};
+        error ->
+            {reply, {error, no_direction}, State}
+    end;
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.

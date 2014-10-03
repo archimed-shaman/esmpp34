@@ -55,7 +55,7 @@
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Stops the response timer for specified request 
+%% Stop the response timer for specified request 
 %% @end
 %%--------------------------------------------------------------------
 
@@ -77,7 +77,7 @@ cancel_timeout(Seq, Timers) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Returns the corresponding SMPP status code
+%% Return the corresponding SMPP status code
 %% @end
 %%--------------------------------------------------------------------
 
@@ -96,7 +96,7 @@ reason2code(_)             -> ?ESME_RUNKNOWNERR.
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Resolves the symbolic name (DNS, hostname, IPv4 or IPv6 address)
+%% Resolve the symbolic name (DNS, hostname, IPv4 or IPv6 address)
 %% to inet:ip_address()
 %% @end
 %%--------------------------------------------------------------------
@@ -116,7 +116,7 @@ resolver(Host) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Handles common PDUs and transfer others to the appropriate
+%% Handle common PDUs and transfer others to the appropriate
 %% bind state handlers
 %% @end
 %%--------------------------------------------------------------------
@@ -201,7 +201,7 @@ receive_data(rx, #state{response_timers = Timers} = State, #pdu{sequence_number 
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Handles common PDUs and transfer others to the appropriate
+%% Handle common PDUs and transfer others to the appropriate
 %% bind state handlers
 %% @end
 %%--------------------------------------------------------------------
@@ -226,7 +226,7 @@ send_data(trx, #state{} = State, Body) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Handles common PDUs and transfer others to the appropriate
+%% Handle common PDUs and transfer others to the appropriate
 %% bind state handlers
 %% @end
 %%--------------------------------------------------------------------
@@ -252,7 +252,7 @@ send_data(trx, #state{} = State, Body, Status) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% (Re)starts the enquire link interval timer
+%% (Re)start the enquire link interval timer
 %% @end
 %%--------------------------------------------------------------------
 
@@ -293,7 +293,7 @@ send_trx(State, Body, Status) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Handles PDUs in transceiver mode
+%% Handle PDUs in transceiver mode
 %% @end
 %%--------------------------------------------------------------------
 
@@ -303,7 +303,15 @@ send_trx(State, Body, Status) ->
       NewState :: #state{}.
 
 
-receive_trx(#state{dir_pid = Pid} = State, #pdu{} = Pdu) ->
+receive_trx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #replace_sm{}}) ->
+    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
+    State;
+
+receive_trx(#state{} = State, #pdu{body = #replace_sm_resp{}}) ->
+    %% it is not request, do nothing
+    State;
+
+receive_trx(#state{dir_pid = {Pid, _}} = State, #pdu{} = Pdu) ->
     gen_server:call(Pid, {receive_data, Pdu}), %% FIXME: handle data in direction
     State.
 
@@ -312,7 +320,7 @@ receive_trx(#state{dir_pid = Pid} = State, #pdu{} = Pdu) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Rejects forbidden PDUs in transmitter mode and transfers others to
+%% Reject forbidden PDUs in transmitter mode and transfers others to
 %% direction
 %% @end
 %%--------------------------------------------------------------------
@@ -324,9 +332,7 @@ receive_trx(#state{dir_pid = Pid} = State, #pdu{} = Pdu) ->
 
 
 receive_tx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #deliver_sm{}}) ->
-    Resp = #generic_nack{},
-    Code = ?ESME_RINVBNDSTS,
-    gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
+    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
     State;
 
 receive_tx(#state{} = State, #pdu{body = #deliver_sm_resp{}}) ->
@@ -334,12 +340,10 @@ receive_tx(#state{} = State, #pdu{body = #deliver_sm_resp{}}) ->
     State;
 
 receive_tx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #alert_notification{}}) ->
-    Resp = #generic_nack{},
-    Code = ?ESME_RINVBNDSTS,
-    gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
+    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
     State;
 
-receive_tx(#state{dir_pid = Pid} = State, #pdu{} = Pdu) ->
+receive_tx(#state{dir_pid = {Pid, _}} = State, #pdu{} = Pdu) ->
     gen_server:call(Pid, {receive_data, Pdu}),
     State.
 
@@ -348,7 +352,7 @@ receive_tx(#state{dir_pid = Pid} = State, #pdu{} = Pdu) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Rejects forbidden PDUs in receiver mode and transfers others to
+%% Reject forbidden PDUs in receiver mode and transfers others to
 %% direction
 %% @end
 %%--------------------------------------------------------------------
@@ -359,7 +363,48 @@ receive_tx(#state{dir_pid = Pid} = State, #pdu{} = Pdu) ->
       NewState :: #state{}.
 
 
-receive_rx(#state{} = State, #pdu{}) ->
+receive_rx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #submit_sm{}}) ->
+    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
+    State;
+
+receive_rx(#state{} = State, #pdu{body = #submit_sm_resp{}}) ->
+    %% it is not request, do nothing
+    State;
+
+receive_rx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #submit_multi{}}) ->
+    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
+    State;
+
+receive_rx(#state{} = State, #pdu{body = #submit_multi_resp{}}) ->
+    %% it is not request, do nothing
+    State;
+
+receive_rx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #query_sm{}}) ->
+    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
+    State;
+
+receive_rx(#state{} = State, #pdu{body = #query_sm_resp{}}) ->
+    %% it is not request, do nothing
+    State;
+
+receive_rx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #cancel_sm{}}) ->
+    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
+    State;
+
+receive_rx(#state{} = State, #pdu{body = #cancel_sm_resp{}}) ->
+    %% it is not request, do nothing
+    State;
+
+receive_rx(#state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #replace_sm{}}) ->
+    reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
+    State;
+
+receive_rx(#state{} = State, #pdu{body = #replace_sm_resp{}}) ->
+    %% it is not request, do nothing
+    State;
+
+receive_rx(#state{dir_pid = {Pid, _}} = State, #pdu{} = Pdu) ->
+    gen_server:call(Pid, {receive_data, Pdu}),
     State.
 
 
@@ -367,7 +412,7 @@ receive_rx(#state{} = State, #pdu{}) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Resolves the symbolic IPv4 address to inet:ip_address()
+%% Resolve the symbolic IPv4 address to inet:ip_address()
 %% @end
 %%--------------------------------------------------------------------
 
@@ -388,7 +433,7 @@ resolver_ipv4(Host) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Resolves the symbolic IPv6 address to inet:ip_address()
+%% Resolve the symbolic IPv6 address to inet:ip_address()
 %% @end
 %%--------------------------------------------------------------------
 
@@ -409,7 +454,7 @@ resolver_ipv6(Host) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Resolves the symbolic name to inet:ip_address()
+%% Resolve the symbolic name to inet:ip_address()
 %% @end
 %%--------------------------------------------------------------------
 
@@ -430,7 +475,7 @@ resolver_dns(Host) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Determines, if the PDU is a response
+%% Determine, if the PDU is a response
 %% @end
 %%--------------------------------------------------------------------
 
@@ -467,8 +512,24 @@ is_response(_) ->
 
 
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Reject the specified packet with generic_nack
+%% @end
+%%--------------------------------------------------------------------
+
+-spec reject_smpp(Socket, Sequence, Code) -> ok | {error, Reason} when
+      Socket :: gen_tcp:socket(),
+      Sequence :: non_neg_integer(),
+      Code :: non_neg_integer(),
+      Reason :: closed | inet:posix().
 
 
+reject_smpp(Socket, Sequence, Code) ->
+    Resp = #generic_nack{},
+    Code = ?ESME_RINVBNDSTS,
+    gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Sequence)).
 
 
 

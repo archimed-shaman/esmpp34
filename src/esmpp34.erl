@@ -31,12 +31,42 @@
 -module(esmpp34).
 -author("Alexander Morozov aka ~ArchimeD~").
 
-%% API
--export([ start/1 ]).
 
+-include_lib("esmpp34raw/include/esmpp34raw_types.hrl").
+
+%% API
+-export([
+         start/1,
+         get_data/1
+        ]).
+
+
+%% TODO: write spec an @doc
 
 start(ConfigGetter) when is_function(ConfigGetter) ->
     %% FIXME: match ok results
     application:start(esmpp34),
     esmpp34_sup:start_manager(ConfigGetter),
     esmpp34_manager:run_config().
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Get all PDUs, received by the direction
+ %% @end
+ %%--------------------------------------------------------------------
+
+ -spec get_data(DirectionId) -> {ok, Data} | {error, Error} when
+       DirectionId :: non_neg_integer(),
+       Data :: [] | [#pdu{}],
+       Error :: any().
+
+
+get_data(DirectionId) ->
+    case esmpp34_manager:get_direction_pid(DirectionId) of
+        {ok, Pid} ->
+            esmpp34_direction:get_data(Pid);
+        {error, _} = Error ->
+            Error
+    end.
