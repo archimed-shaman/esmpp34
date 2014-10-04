@@ -236,11 +236,9 @@ send_data(Mode, #state{socket = Socket, response_timers = Timers} = State, Body,
     case is_allowed(Mode, Body) of
         true when IsResponse ->
             %% It is allowed response, just send
-            io:format("allowed, response~n"),
             send_smpp(Socket, Body, Sequence),
             {ok, State};
         true ->
-            io:format("allowed, request~n"),
             NewTimers = case send_smpp(Socket, Body, Sequence) of
                             ok ->
                                 run_timer(Sequence, Timers);

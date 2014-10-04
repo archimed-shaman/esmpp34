@@ -277,8 +277,11 @@ handle_sync_event(_Event, _From, StateName, State) ->
              {stop, Reason :: normal | term(), NewStateData :: term()}).
 
 handle_info({tcp, Socket,  Bin}, StateName, #state{data = OldData} = StateData) ->
-    io:format("data: ~p~n", [Bin]),
-    {KnownPDU, UnknownPDU, Rest} = esmpp34raw:unpack_sequence(<<OldData/binary, Bin/binary>>),
+    %% io:format("data: ~p~n", [Bin]),
+    Data = lists:foldl(fun(Data, Accumulator) ->
+                               <<Accumulator/binary, Data/binary>>
+                       end, <<OldData/binary, Bin/binary>>, do_recv(Socket, [], 10)),
+    {KnownPDU, UnknownPDU, Rest} = esmpp34raw:unpack_sequence(Data),
     Result = ?MODULE:StateName({data, KnownPDU, UnknownPDU}, StateData#state{data = Rest}),
     inet:setopts(Socket, [{active, once}]),
     Result;
@@ -290,6 +293,12 @@ handle_info({timeout, Seq, enquire_link}, _, #state{response_timers = Timers} = 
 
 
 handle_info({tcp_closed, _Socket}, _StateName, #state{response_timers = Timers} = State) ->
+    io:format("Socket closed, cancelling timers...~n"),
+    lists:foreach(fun(Timer) -> erlang:cancel_timer(Timer) end, dict:to_list(Timers)),
+    {stop, normal, State#state{response_timers = []}};
+
+handle_info({tcp_error, _Socket}, _StateName, #state{response_timers = Timers} = State) ->
+    %% FIXME: maybe do no close
     io:format("Socket closed, cancelling timers...~n"),
     lists:foreach(fun(Timer) -> erlang:cancel_timer(Timer) end, dict:to_list(Timers)),
     {stop, normal, State#state{response_timers = []}};
@@ -342,7 +351,23 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-proceed_open(#state{connection = #smpp_entity{id = ConnectionId} = Connection, socket = Socket} = State,
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Proceed packages in open state.
+%% @end
+%%--------------------------------------------------------------------
+
+-spec proceed_open(State, Pdu) -> {next_state, StateName, StateData} |
+                                  {stop, Status, StateData} when
+      State :: #state{},
+      Pdu :: #pdu{},
+      StateName :: bound_trx | bound_tx | bound_rx | open,
+      StateData :: #state{},
+      Status :: normal.
+
+
+proceed_open(#state{connection = #smpp_entity{id = ConnectionId} = _Connection, socket = Socket} = State,
              #pdu{sequence_number = Seq, body = #bind_transceiver{password = Password, system_id = SystemId} = Packet}) ->
     io:format("===> TRANSCEIVER: ~p~n", [Packet]),
     Result = esmpp34_manager:register_connection(ConnectionId, trx, SystemId, Password),
@@ -363,16 +388,44 @@ proceed_open(#state{connection = #smpp_entity{id = ConnectionId} = Connection, s
             {stop, normal, State} %% FIXME: do something
     end;
 
-proceed_open(#state{connection = #smpp_entity{} = Connection, socket = Socket} = State,
-             #pdu{sequence_number = Seq, body = #bind_transmitter{} = Packet}) ->
+proceed_open(#state{connection = #smpp_entity{} = _Connection, socket = _Socket} = State,
+             #pdu{sequence_number = _Seq, body = #bind_transmitter{} = Packet}) ->
     io:format("===> TRANSMITTER: ~p~n", [Packet]),
     {next_state, open, State};
 
-proceed_open(#state{connection = #smpp_entity{} = Connection, socket = Socket} = State,
-             #pdu{sequence_number = Seq, body = #bind_receiver{} = Packet}) ->
+proceed_open(#state{connection = #smpp_entity{} = _Connection, socket = _Socket} = State,
+             #pdu{sequence_number = _Seq, body = #bind_receiver{} = Packet}) ->
     io:format("===> RECEIVER: ~p~n", [Packet]),
     {next_state, open, State};
 
 proceed_open(#state{} = State, A) ->
     io:format("error received unknown packet ~p~n", [A]),
     {next_state, open, State}.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Receive data from socket in passive mode
+%% @end
+%%--------------------------------------------------------------------
+
+-spec do_recv(Socket, Accumulator, Counter) -> RecvData when
+      Socket :: gen_tcp:socket(),
+      Accumulator :: [] | [binary()],
+      Counter :: non_neg_integer(),
+      RecvData :: [] | [binary()].
+
+
+do_recv(Socket, Accumulator, Counter) when Counter > 0 ->
+    %% io:format("do recv(~p, ~p, ~p)~n", [Socket, Accumulator, Counter]),
+    case gen_tcp:recv(Socket, 65535, 10) of
+        {ok, Data} ->
+            do_recv(Socket, [Data | Accumulator], Counter - 1);
+        {error, _} ->
+            lists:reverse(Accumulator)
+    end;
+
+do_recv(_Socket, Accumulator, _Counter) ->
+    lists:reverse(Accumulator).

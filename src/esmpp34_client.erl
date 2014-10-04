@@ -257,7 +257,7 @@ handle_info(bind, StateName, #state{} = StateData) ->
     ?MODULE:StateName(bind, StateData);
 
 handle_info({tcp, _Socket,  Bin}, StateName, #state{data = OldData} = StateData) ->
-    io:format("data: ~p~n", [Bin]),
+    %% io:format("data: ~p~n", [Bin]),
     {KnownPDU, UnknownPDU, Rest} = esmpp34raw:unpack_sequence(<<OldData/binary, Bin/binary>>),
     ?MODULE:StateName({data, KnownPDU, UnknownPDU}, StateData#state{data = Rest});
 
