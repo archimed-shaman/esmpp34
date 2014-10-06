@@ -145,7 +145,7 @@ open_bind_resp({data, [#pdu{} = Resp | _KnownPDU], _UnknownPDU}, #state{connecti
                                                                         response_timers = Timers} = State) -> %% FIXME: proceed other known PDU
     case proceed_bind_resp(Resp, Mode) of
         {ok, NextState, Seq} ->
-            NewTimers = esmpp34_utils:cancel_timeout(Seq, Timers),
+            {_, NewTimers} = esmpp34_utils:cancel_timeout(Seq, Timers),
             case esmpp34_manager:register_connection(Id, Mode) of
                 {ok, DirPid} ->
                     io:format("Connected!~n"),
@@ -265,8 +265,8 @@ handle_info({tcp, Socket,  Bin}, StateName, #state{data = OldData} = StateData) 
     inet:setopts(Socket, [{active, once}]),
     Result;
 
-handle_info({timeout, _TimerRef, Seq}, StateName, #state{response_timers = Timers} = State) ->
-    NewTimers = esmpp34_utils:cancel_timeout(Seq, Timers),
+handle_info({timeout, Seq}, StateName, #state{response_timers = Timers} = State) ->
+    {_, NewTimers} = esmpp34_utils:cancel_timeout(Seq, Timers),
     %% TODO: send error to logic
     {next_state, StateName, State#state{response_timers = NewTimers}};
 

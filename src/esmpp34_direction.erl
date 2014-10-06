@@ -249,27 +249,27 @@ handle_call({receive_data, Pdu}, _From, #state{pdu_buffer = PDUBuffer} = State) 
 handle_call(get_data, _From, #state{pdu_buffer = PDUBuffer} = State) ->
     {reply, {ok, PDUBuffer}, State#state{pdu_buffer = []}};
 
-handle_call({send_data, Data}, _From, #state{tx = Tx, rx = Rx} = State) ->
+handle_call({send_data, Data}, {From, _}, #state{tx = Tx, rx = Rx} = State) ->
     Connections = [Tx , Rx],
-    case lists:dropwhile(fun(Pid) -> gen_fsm:sync_send_event(Pid, {send, Data}) /= ok end, Connections) of
+    case lists:dropwhile(fun(Pid) -> gen_fsm:sync_send_event(Pid, {send, Data, From}) /= ok end, Connections) of
         [] ->
             {reply, {error, no_awailable_connections}, State};
         [_|_] ->
             {reply, ok, State}
     end;
 
-handle_call({send_data, Data, Sequence}, _From, #state{tx = Tx, rx = Rx} = State) ->
+handle_call({send_data, Data, Sequence}, {From, _}, #state{tx = Tx, rx = Rx} = State) ->
     Connections = [Tx , Rx],
-    case lists:dropwhile(fun(Pid) -> gen_fsm:sync_send_event(Pid, {send, Data, Sequence}) /= ok end, Connections) of
+    case lists:dropwhile(fun(Pid) -> gen_fsm:sync_send_event(Pid, {send, Data, From, Sequence}) /= ok end, Connections) of
         [] ->
             {reply, {error, no_awailable_connections}, State};
         [_|_] ->
             {reply, ok, State}
     end;
 
-handle_call({send_data, Data, Sequence, Status}, _From, #state{tx = Tx, rx = Rx} = State) ->
+handle_call({send_data, Data, From, Sequence, Status}, _From, #state{tx = Tx, rx = Rx} = State) ->
     Connections = [Tx , Rx],
-    case lists:dropwhile(fun(Pid) -> gen_fsm:sync_send_event(Pid, {send, Data, Sequence, Status}) /= ok end, Connections) of
+    case lists:dropwhile(fun(Pid) -> gen_fsm:sync_send_event(Pid, {send, Data, From, Sequence, Status}) /= ok end, Connections) of
         [] ->
             {reply, {error, no_awailable_connections}, State};
         [_|_] ->

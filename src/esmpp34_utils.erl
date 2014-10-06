@@ -40,12 +40,13 @@
 %% API
 -export([
          cancel_timeout/2,
-         run_timer/2,
+         run_timer/3,
          reason2code/1,
          resolver/1,
-         send_data/4,
          send_data/5,
+         send_data/6,
 	 receive_data/3,
+         receive_timeout/2,
 	 start_el_timer/1,
          do_recv/3
         ]).
@@ -61,19 +62,20 @@
 %% @end
 %%--------------------------------------------------------------------
 
--spec cancel_timeout(Seq, Timers :: Dict1) -> NewTimer :: Dict2 when
+-spec cancel_timeout(Seq, Timers :: Dict1) -> {From, NewTimer :: Dict2} when
       Seq :: non_neg_integer(),
       Dict1 :: dict:dict(Key, Value),
+      From :: pid() | undefined,
       Dict2 :: dict:dict(Key, Value).
 
 
 cancel_timeout(Seq, Timers) ->
     case dict:find(Seq, Timers) of
-        {ok, Timer} ->
+        {ok, {From, Timer}} ->
             erlang:cancel_timer(Timer),
-            dict:erase(Seq, Timers);
+            {From, dict:erase(Seq, Timers)};
         error ->
-            Timers
+            {undefined, Timers}
     end.
 
 
@@ -84,15 +86,16 @@ cancel_timeout(Seq, Timers) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec run_timer(Seq, Timers :: Dict1) -> NewTimers :: Dict2 when
+-spec run_timer(Seq, From, Timers :: Dict1) -> NewTimers :: Dict2 when
       Seq :: non_neg_integer(),
+      From :: pid(),
       Dict1 :: dict:dict(Key, Value),
       Dict2 :: dict:dict(Key, Value).
 
 
-run_timer(Seq, Timers) ->
+run_timer(Seq, From, Timers) ->
     Timer = erlang:send_after(30000, self(), {timeout, Seq}), %% TODO: interval from config
-    dict:store(Seq, Timer, Timers).
+    dict:store(Seq, {From, Timer}, Timers).
 
 
 
@@ -150,10 +153,9 @@ resolver(Host) ->
       NewState :: #state{}.
 
 
-receive_data(_, #state{response_timers = Timers} = State, #pdu{sequence_number = Seq, body = #enquire_link_resp{}}) ->
-    NewTimers = cancel_timeout(Seq, Timers),
+receive_data(_, #state{} = State, #pdu{body = #enquire_link_resp{}}) ->
     io:format("Received enquire_link_resp~n"),
-    start_el_timer(State#state{response_timers = NewTimers});
+    start_el_timer(State);
 
 receive_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #enquire_link{}}) ->
     %% TODO: cancel enquire_link timer
@@ -198,9 +200,10 @@ receive_data(Mode, #state{response_timers = Timers,
     IsAllowed = is_allowed(Mode, Body),
     case is_response(Body) of
         true when IsAllowed ->
-            %% it is response and it is allowed in current mode; send it to direction
-            NewTimers = cancel_timeout(Seq, Timers),
-            gen_server:call(Pid, {receive_data, Pdu}), %% FIXME: handle data in direction
+            %% it is response and it is allowed in current mode
+            {Pid, NewTimers} = cancel_timeout(Seq, Timers),
+            Pid ! {smpp_response, Body, Seq},
+            %% TODO: handle data in directionsend data to direction if is set in config
             State#state{response_timers = NewTimers};
         true ->
             %% it is a response, but it isn't allowed in current mode; do nothing
@@ -219,20 +222,46 @@ receive_data(Mode, #state{response_timers = Timers,
 
 %%--------------------------------------------------------------------
 %% @doc
+%% Handle timeout for specific request. Cancel timers and send
+%% error response to the sender.
+%% @end
+%%--------------------------------------------------------------------
+
+-spec receive_timeout(Seq, State) -> NewState when
+      Seq :: non_neg_integer(),
+      State :: #state{},
+      NewState :: #state{}.
+               
+
+receive_timeout(Seq, #state{dir_pid = {Pid, _}, response_timers = Timers} = State) ->
+    {Pid, NewTimerDict} = case cancel_timeout(Seq, Timers) of
+                              {Pid, NewTimers} ->
+                                  Pid ! {smpp_error, timeout, Seq}, %% TODO: check config and send to direction, if necessary
+                                  NewTimers;
+                              {undefined, NewTimers} ->
+                                  NewTimers
+                          end,
+    State#state{response_timers = NewTimerDict}.
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
 %% Handle common PDUs and transfer others to the appropriate
 %% bind state handlers
 %% @end
 %%--------------------------------------------------------------------
 
--spec send_data(Mode, State1, Body, Sequence) -> State2 when
+-spec send_data(Mode, State1, Body, From, Sequence) -> State2 when
       Mode :: tx | rx | trx,
       State1 :: #state{},
       Body :: pdu_body(),
+      From :: pid(),
       Sequence :: non_neg_integer(),
       State2 :: #state{}.
 
 
-send_data(Mode, #state{socket = Socket, response_timers = Timers} = State, Body, Sequence) ->
+send_data(Mode, #state{socket = Socket, response_timers = Timers} = State, Body, From, Sequence) ->
     IsResponse = is_response(Body),
     case is_allowed(Mode, Body) of
         true when IsResponse ->
@@ -242,7 +271,7 @@ send_data(Mode, #state{socket = Socket, response_timers = Timers} = State, Body,
         true ->
             NewTimers = case send_smpp(Socket, Body, Sequence) of
                             ok ->
-                                run_timer(Sequence, Timers);
+                                run_timer(Sequence, From, Timers);
                             _ ->
                                 %% FIXME: unable send, maybe force disconnect?
                                 Timers
@@ -262,16 +291,17 @@ send_data(Mode, #state{socket = Socket, response_timers = Timers} = State, Body,
 %% @end
 %%--------------------------------------------------------------------
 
--spec send_data(Mode, State1, Body, Sequence, Status) -> State2 when
+-spec send_data(Mode, State1, Body, Sequence, From, Status) -> State2 when
       Mode :: tx | rx | trx,
       State1 :: #state{},
       Body :: pdu_body(),
       Sequence :: non_neg_integer(),
+      From :: pid(),
       Status :: non_neg_integer(),
       State2 :: #state{}.
 
 
-send_data(Mode, #state{socket = Socket, response_timers = Timers} = State, Body, Sequence, Status) ->
+send_data(Mode, #state{socket = Socket, response_timers = Timers} = State, Body, From, Sequence, Status) ->
     IsResponse = is_response(Body),
     case is_allowed(Mode, Body) of
         true when IsResponse ->
@@ -281,7 +311,7 @@ send_data(Mode, #state{socket = Socket, response_timers = Timers} = State, Body,
         true ->
             NewTimers = case send_smpp(Socket, Body, Sequence, Status) of
                             ok ->
-                                run_timer(Sequence, Timers);
+                                run_timer(Sequence, From, Timers);
                             _ ->
                                 %% FIXME: unable send, maybe force disconnect?
                                 Timers

@@ -150,6 +150,11 @@ bound_trx(enquire_link, #state{socket = Socket, seq = Seq, response_timers = Tim
 bound_trx({data, Pdus, _}, #state{} = State) ->
     NewState = lists:foldl(fun(Value, Acc) -> esmpp34_utils:receive_data(trx, Acc, Value) end, esmpp34_utils:start_el_timer(State), Pdus),
     %% TODO: handle packets to change state
+    {next_state, bound_trx, NewState};
+
+bound_trx({timeout, Seq}, #state{} = State) ->
+    io:format("Timeout for sequence ~p~n", [Seq]),
+    NewState = esmpp34_utils:receive_timeout(Seq, State),
     {next_state, bound_trx, NewState}.
     
 
@@ -167,7 +172,7 @@ bound_trx({data, Pdus, _}, #state{} = State) ->
 %%--------------------------------------------------------------------
 
 
-bound_trx({send, Pdu}, _From, #state{seq = Seq} = State) ->
+bound_trx({send, Pdu, From}, _, #state{seq = Seq} = State) ->
     case esmpp34_utils:send_data(trx, State#state{seq = Seq + 1}, Pdu, Seq) of
         {ok, NewState} ->
             {reply, ok, bound_trx, NewState};
@@ -175,7 +180,7 @@ bound_trx({send, Pdu}, _From, #state{seq = Seq} = State) ->
             {reply, E, bound_trx, State}
     end;
 
-bound_trx({send, Pdu, Sequence}, _From, #state{} = State) ->
+bound_trx({send, Pdu, From, Sequence}, _, #state{} = State) ->
     case esmpp34_utils:send_data(trx, State, Pdu, Sequence) of
         {ok, NewState} ->
             {reply, ok, bound_trx, NewState};
@@ -183,7 +188,7 @@ bound_trx({send, Pdu, Sequence}, _From, #state{} = State) ->
             {reply, E, bound_trx, State}
     end;
 
-bound_trx({send, Pdu, Sequence, Status}, _From, #state{} = State) ->
+bound_trx({send, Pdu, From, Sequence, Status}, _From, #state{} = State) ->
     case esmpp34_utils:send_data(trx, State, Pdu, Sequence, Status) of
         {ok, NewState} ->
             {reply, ok, bound_trx, NewState};
@@ -290,6 +295,9 @@ handle_info({timeout, Seq, enquire_link}, _, #state{response_timers = Timers} = 
     io:format("Timeout for enquire_link ~p~n", [Seq]),
     NewTimers = esmpp34_utils:cancel_timeout(Seq, Timers),
     {stop, normal, State#state{response_timers = NewTimers}}; %% FIXME: why stop?
+
+handle_info({timeout, _Seq} = Msg, StateName, #state{} = State) ->
+    ?MODULE:StateName(Msg, State);
 
 handle_info({tcp_closed, _Socket}, _StateName, #state{response_timers = Timers} = State) ->
     io:format("Socket closed, cancelling timers...~n"),
