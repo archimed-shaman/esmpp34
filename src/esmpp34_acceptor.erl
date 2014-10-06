@@ -280,7 +280,7 @@ handle_info({tcp, Socket,  Bin}, StateName, #state{data = OldData} = StateData) 
     %% io:format("data: ~p~n", [Bin]),
     Data = lists:foldl(fun(Data, Accumulator) ->
                                <<Accumulator/binary, Data/binary>>
-                       end, <<OldData/binary, Bin/binary>>, do_recv(Socket, [], 10)),
+                       end, <<OldData/binary, Bin/binary>>, esmpp34_utils:do_recv(Socket, [], 10)),
     {KnownPDU, UnknownPDU, Rest} = esmpp34raw:unpack_sequence(Data),
     Result = ?MODULE:StateName({data, KnownPDU, UnknownPDU}, StateData#state{data = Rest}),
     inet:setopts(Socket, [{active, once}]),
@@ -290,7 +290,6 @@ handle_info({timeout, Seq, enquire_link}, _, #state{response_timers = Timers} = 
     io:format("Timeout for enquire_link ~p~n", [Seq]),
     NewTimers = esmpp34_utils:cancel_timeout(Seq, Timers),
     {stop, normal, State#state{response_timers = NewTimers}}; %% FIXME: why stop?
-
 
 handle_info({tcp_closed, _Socket}, _StateName, #state{response_timers = Timers} = State) ->
     io:format("Socket closed, cancelling timers...~n"),
@@ -402,30 +401,3 @@ proceed_open(#state{} = State, A) ->
     io:format("error received unknown packet ~p~n", [A]),
     {next_state, open, State}.
 
-
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Receive data from socket in passive mode
-%% @end
-%%--------------------------------------------------------------------
-
--spec do_recv(Socket, Accumulator, Counter) -> RecvData when
-      Socket :: gen_tcp:socket(),
-      Accumulator :: [] | [binary()],
-      Counter :: non_neg_integer(),
-      RecvData :: [] | [binary()].
-
-
-do_recv(Socket, Accumulator, Counter) when Counter > 0 ->
-    %% io:format("do recv(~p, ~p, ~p)~n", [Socket, Accumulator, Counter]),
-    case gen_tcp:recv(Socket, 65535, 10) of
-        {ok, Data} ->
-            do_recv(Socket, [Data | Accumulator], Counter - 1);
-        {error, _} ->
-            lists:reverse(Accumulator)
-    end;
-
-do_recv(_Socket, Accumulator, _Counter) ->
-    lists:reverse(Accumulator).

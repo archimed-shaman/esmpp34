@@ -256,16 +256,14 @@ handle_sync_event(_Event, _From, StateName, State) ->
 handle_info(bind, StateName, #state{} = StateData) ->
     ?MODULE:StateName(bind, StateData);
 
-handle_info({tcp, _Socket,  Bin}, StateName, #state{data = OldData} = StateData) ->
-    %% io:format("data: ~p~n", [Bin]),
-    {KnownPDU, UnknownPDU, Rest} = esmpp34raw:unpack_sequence(<<OldData/binary, Bin/binary>>),
-    ?MODULE:StateName({data, KnownPDU, UnknownPDU}, StateData#state{data = Rest});
-
-%% TODO: timers
-%% handle_info({timeout, _TimerRef, {enquire_link, Seq}}, StateName, #state{response_timers = Timers} = State) ->
-%%   NewTimers = handle_timeout(Seq, Timers),
-%%   %% TODO: send error to logic
-%%   {next_state, StateName, State#state{response_timers = NewTimers}}; %% FIXME: maybe stop
+handle_info({tcp, Socket,  Bin}, StateName, #state{data = OldData} = StateData) ->
+    Data = lists:foldl(fun(Data, Accumulator) ->
+                               <<Accumulator/binary, Data/binary>>
+                       end, <<OldData/binary, Bin/binary>>, esmpp34_utils:do_recv(Socket, [], 10)),
+    {KnownPDU, UnknownPDU, Rest} = esmpp34raw:unpack_sequence(Data),
+    Result = ?MODULE:StateName({data, KnownPDU, UnknownPDU}, StateData#state{data = Rest}),
+    inet:setopts(Socket, [{active, once}]),
+    Result;
 
 handle_info({timeout, _TimerRef, Seq}, StateName, #state{response_timers = Timers} = State) ->
     NewTimers = esmpp34_utils:cancel_timeout(Seq, Timers),

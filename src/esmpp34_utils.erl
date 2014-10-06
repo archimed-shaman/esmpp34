@@ -46,7 +46,8 @@
          send_data/4,
          send_data/5,
 	 receive_data/3,
-	 start_el_timer/1
+	 start_el_timer/1,
+         do_recv/3
         ]).
 
 
@@ -614,3 +615,31 @@ send_smpp(Socket, Packet, Sequence) ->
 
 send_smpp(Socket, Packet, Sequence, Status) ->
     gen_tcp:send(Socket, esmpp34raw:pack_single(Packet, Status, Sequence)).
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Receive data from socket in passive mode
+%% @end
+%%--------------------------------------------------------------------
+
+-spec do_recv(Socket, Accumulator, Counter) -> RecvData when
+      Socket :: gen_tcp:socket(),
+      Accumulator :: [] | [binary()],
+      Counter :: non_neg_integer(),
+      RecvData :: [] | [binary()].
+
+
+do_recv(Socket, Accumulator, Counter) when Counter > 0 ->
+    %% io:format("do recv(~p, ~p, ~p)~n", [Socket, Accumulator, Counter]),
+    case gen_tcp:recv(Socket, 65535, 10) of
+        {ok, Data} ->
+            do_recv(Socket, [Data | Accumulator], Counter - 1);
+        {error, _} ->
+            lists:reverse(Accumulator)
+    end;
+
+do_recv(_Socket, Accumulator, _Counter) ->
+    lists:reverse(Accumulator).
