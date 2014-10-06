@@ -293,7 +293,7 @@ handle_info({tcp, Socket,  Bin}, StateName, #state{data = OldData} = StateData) 
 
 handle_info({timeout, Seq, enquire_link}, _, #state{response_timers = Timers} = State) ->
     io:format("Timeout for enquire_link ~p~n", [Seq]),
-    NewTimers = esmpp34_utils:cancel_timeout(Seq, Timers),
+    {_, NewTimers} = esmpp34_utils:cancel_timeout(Seq, Timers),
     {stop, normal, State#state{response_timers = NewTimers}}; %% FIXME: why stop?
 
 handle_info({timeout, _Seq} = Msg, StateName, #state{} = State) ->
