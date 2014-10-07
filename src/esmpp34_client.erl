@@ -34,6 +34,7 @@
 -behaviour(gen_fsm).
 
 -include("esmpp34.hrl").
+-include("esmpp34_defs.hrl").
 -include_lib("esmpp34raw/include/esmpp34raw_types.hrl").
 -include_lib("esmpp34raw/include/esmpp34raw_constants.hrl").
 
@@ -53,15 +54,7 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, { response_timers = dict:new(),
-                 data = <<>>,
-                 socket,
-                 host,
-                 port,
-                 connection,
-                 mode,
-                 seq = 0,
-                 dir_pid }).
+
 
 %%%===================================================================
 %%% API
@@ -118,11 +111,10 @@ init(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 
-open(bind, #state{socket = Socket,
-                  mode = Mode,
-                  connection = #smpp_entity{system_id = SystemId, password = Password},
-                  seq = Seq,
-                  response_timers = Timers} = State) when Mode == trx ->
+open(bind, #state{ socket = Socket,
+                   mode = Mode,
+                   connection = #smpp_entity{system_id = SystemId, password = Password},
+                   seq = Seq } = State) when Mode == trx ->
     Req = #bind_transceiver{system_id = SystemId,
                             password = Password,
                             system_type = [], %% FIXME: maybe, its necessary to set correct system type
@@ -132,42 +124,73 @@ open(bind, #state{socket = Socket,
                             %% addr_npi           = 0,
                             %% address_range      = []
                            },
-    Code = ?ESME_ROK,
-    gen_tcp:send(Socket, esmpp34raw:pack_single(Req, Code, Seq)),
-    Timer = erlang:send_after(10000, self(), Seq), %% TODO: timeout from config
-    Newtimers = dict:store(Seq, Timer, Timers),
-    {next_state, open_bind_resp, State#state{seq = Seq + 1, response_timers = Newtimers}}.
+    gen_tcp:send(Socket, esmpp34raw:pack_single(Req, ?ESME_ROK, Seq)),
+    {next_state, open_bind_resp, State#state{seq = Seq + 1}, 10000}; %% TODO: timeout from config
+
+open(bind, #state{ socket = Socket,
+                   mode = Mode,
+                   connection = #smpp_entity{system_id = SystemId, password = Password},
+                   seq = Seq } = State) when Mode == tx ->
+    Req = #bind_transmitter{system_id = SystemId,
+                            password = Password,
+                            system_type = [], %% FIXME: maybe, its necessary to set correct system type
+                            interface_version = 16#34
+                            %% TODO: fill this fields
+                            %% addr_ton           = 0,
+                            %% addr_npi           = 0,
+                            %% address_range      = []
+                           },
+    gen_tcp:send(Socket, esmpp34raw:pack_single(Req, ?ESME_ROK, Seq)),
+    {next_state, open_bind_resp, State#state{seq = Seq + 1}, 10000}; %% TODO: timeout from config
+
+open(bind, #state{ socket = Socket,
+                   mode = Mode,
+                   connection = #smpp_entity{system_id = SystemId, password = Password},
+                   seq = Seq } = State) when Mode == rx ->
+    Req = #bind_receiver{system_id = SystemId,
+                         password = Password,
+                         system_type = [], %% FIXME: maybe, its necessary to set correct system type
+                         interface_version = 16#34
+                         %% TODO: fill this fields
+                         %% addr_ton           = 0,
+                         %% addr_npi           = 0,
+                         %% address_range      = []
+                        },
+    gen_tcp:send(Socket, esmpp34raw:pack_single(Req, ?ESME_ROK, Seq)),
+    {next_state, open_bind_resp, State#state{seq = Seq + 1}, 10000}. %% TODO: timeout from config
 
 
-open_bind_resp({data, [#pdu{} = Resp | _KnownPDU], _UnknownPDU}, #state{connection = #smpp_entity{id = Id},
-                                                                        socket = Socket,
-                                                                        mode = Mode,
-                                                                        response_timers = Timers} = State) -> %% FIXME: proceed other known PDU
+
+
+
+open_bind_resp({data, [#pdu{} = Resp | _KnownPDU], _UnknownPDU}, #state{ connection = #smpp_entity{id = Id},
+                                                                         socket = Socket,
+                                                                         mode = Mode } = State) -> %% FIXME: proceed other known PDU
     case proceed_bind_resp(Resp, Mode) of
-        {ok, NextState, Seq} ->
-            {_, NewTimers} = esmpp34_utils:cancel_timeout(Seq, Timers),
+        {ok, NextState} ->
             case esmpp34_manager:register_connection(Id, Mode) of
                 {ok, DirPid} ->
                     io:format("Connected!~n"),
                     Ref = erlang:monitor(process, DirPid),
-                    {next_state, NextState, State#state{dir_pid = {DirPid, Ref}, response_timers = NewTimers}};
+                    {next_state, NextState, State#state{dir_pid = {DirPid, Ref}}};
                 {error, _Reason} ->
-                    {stop, normal}
+                    {stop, normal, State}
             end;
         {error, Error} ->
             io:format("Unable to connect: ~p~n", [Error]),
-            {stop, normal};
+            {stop, {error, unable_connect}, State};
         {unknown_command, Seq, CommandId, _Status} ->
             io:format("Received unknown PDU in unbinded: ~p~n", [CommandId]),
-            Req = #generic_nack{},
-            Code = ?ESME_RINVBNDSTS,
-            gen_tcp:send(Socket, esmpp34raw:pack_single(Req, Code, Seq)),
+            esmpp34_utils:reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
             {next_state, open_bind_resp, State}
     end;
 
-open_bind_resp(Signal, #state{} = State) ->
-    io:format("===========> ~p~n", [Signal]),
-    {next_state, open_bind_resp, State}.
+open_bind_resp(timeout, #state{socket = Socket} = State) ->
+    io:format("session init timeout~n"),
+    gen_tcp:close(Socket),
+    {stop, {error, bind_timeout}, State}.
+
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -333,9 +356,21 @@ starter(Host, Port, #state{} = State) ->
             {stop, normal}
     end.
 
-proceed_bind_resp(#pdu{sequence_number = Num, command_id = ?bind_transceiver_resp, command_status = Status}, Mode) when Mode == trx, Status == ?ESME_ROK ->
-    {ok, transceiver, Num};
-proceed_bind_resp(#pdu{sequence_number = _Num, command_id = ?bind_transceiver_resp, command_status = Status}, Mode) when Mode == trx, Status /= ?ESME_ROK ->
+
+
+
+
+proceed_bind_resp(#pdu{command_id = ?bind_transceiver_resp, command_status = Status}, Mode) when Mode == trx, Status == ?ESME_ROK ->
+    {ok, bound_trx};
+
+proceed_bind_resp(#pdu{command_id = ?bind_transmitter_resp, command_status = Status}, Mode) when Mode == tx, Status == ?ESME_ROK ->
+    {ok, bound_tx};
+
+proceed_bind_resp(#pdu{command_id = ?bind_receiver_resp, command_status = Status}, Mode) when Mode == rx, Status == ?ESME_ROK ->
+    {ok, bound_rx};
+
+proceed_bind_resp(#pdu{command_id = ?bind_transceiver_resp, command_status = Status}, _Mode) when Status /= ?ESME_ROK ->
     {error, Status};
+
 proceed_bind_resp(#pdu{sequence_number = Num, command_id = CommandId, command_status = Status}, _Mode)  ->
     {unknown_command, Num, CommandId, Status}.

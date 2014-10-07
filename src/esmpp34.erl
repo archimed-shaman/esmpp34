@@ -32,6 +32,7 @@
 -author("Alexander Morozov aka ~ArchimeD~").
 
 
+-include("esmpp34_defs.hrl").
 -include_lib("esmpp34raw/include/esmpp34raw_types.hrl").
 
 %% API
@@ -40,7 +41,8 @@
          get_data/1,
          send_data/2,
          send_data/3,
-         send_data/4
+         send_data/4,
+         version/0
         ]).
 
 
@@ -51,6 +53,21 @@ start(ConfigGetter) when is_function(ConfigGetter) ->
     application:start(esmpp34),
     esmpp34_sup:start_manager(ConfigGetter),
     esmpp34_manager:run_config().
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Return version of the library
+%% @end
+%%--------------------------------------------------------------------
+
+-spec version() -> Version when
+      Version :: string().
+
+
+version() ->
+    ?VERSION.
 
 
 

@@ -45,5 +45,6 @@
                  dir_pid,
 		 el_timer }).
 
+-define(VERSION, "1.0.0 alpha").
 
 -endif.
