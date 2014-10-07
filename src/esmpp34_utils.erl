@@ -48,7 +48,8 @@
 	 receive_data/3,
          receive_timeout/2,
 	 start_el_timer/1,
-         do_recv/3
+         do_recv/3,
+         reject_smpp/3
         ]).
 
 
@@ -602,7 +603,6 @@ is_response(_) ->
 
 reject_smpp(Socket, Sequence, Code) ->
     Resp = #generic_nack{},
-    Code = ?ESME_RINVBNDSTS,
     gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Sequence)).
 
 
