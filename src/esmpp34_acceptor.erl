@@ -138,9 +138,19 @@ open(timeout, #state{socket = Socket} = State) ->
     gen_tcp:close(Socket),
     {stop, normal, State};
 
-open({data, [Head | _], []}, #state{socket = Socket} = State) ->
-    inet:setopts(Socket, [{active, once}]),
-    proceed_open(State, Head).
+open({data, [], UnknownPdus}, #state{socket = Socket} = State) ->
+    lists:foreach(fun(#pdu{sequence_number = Seq}) ->
+                          esmpp34_utils:reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS)
+                  end, UnknownPdus),
+    {next_state, open, State};
+
+open({data, [Head | Tail], UnknownPdus}, #state{} = State) ->
+    case proceed_open(State, Head) of
+        {next_state, StateName, NewState} ->
+            StateName({data, Tail, UnknownPdus}, NewState);
+        {stop, _, _} = StopResult ->
+            StopResult
+    end.
 
 
 
@@ -162,14 +172,8 @@ open({data, [Head | _], []}, #state{socket = Socket} = State) ->
       Reason :: term().
 
 
-bound_trx(enquire_link, #state{socket = Socket, seq = Seq, response_timers = Timers} = State) ->
-    NewState = esmpp34_utils:start_el_timer(State),
-    Req = #enquire_link{},
-    Code = ?ESME_ROK,
-    gen_tcp:send(Socket, esmpp34raw:pack_single(Req, Code, Seq)),
-    Timer = erlang:send_after(30000, self(), {timeout, Seq, enquire_link}), %% TODO: interval from config
-    NewTimers = dict:store(Seq, Timer, Timers),
-    {next_state, bound_trx, NewState#state{response_timers = NewTimers, seq = Seq + 1}};
+bound_trx(enquire_link, #state{} = State) ->
+    {next_state, bound_trx, esmpp34_utils:send_enquire_link(State)};
 
 bound_trx({data, Pdus, _}, #state{} = State) ->
     NewState = lists:foldl(fun(Value, Acc) -> esmpp34_utils:receive_data(trx, Acc, Value) end, esmpp34_utils:start_el_timer(State), Pdus),
@@ -249,14 +253,8 @@ bound_trx({send, Pdu, From, Sequence, Status}, _, #state{} = State) ->
       Reason :: term().
 
 
-bound_tx(enquire_link, #state{socket = Socket, seq = Seq, response_timers = Timers} = State) ->
-    NewState = esmpp34_utils:start_el_timer(State),
-    Req = #enquire_link{},
-    Code = ?ESME_ROK,
-    gen_tcp:send(Socket, esmpp34raw:pack_single(Req, Code, Seq)),
-    Timer = erlang:send_after(30000, self(), {timeout, Seq, enquire_link}), %% TODO: interval from config
-    NewTimers = dict:store(Seq, Timer, Timers),
-    {next_state, bound_tx, NewState#state{response_timers = NewTimers, seq = Seq + 1}};
+bound_tx(enquire_link, #state{} = State) ->
+    {next_state, bound_tx, esmpp34_utils:send_enquire_link(State)};
 
 bound_tx({data, Pdus, _}, #state{} = State) ->
     NewState = lists:foldl(fun(Value, Acc) -> esmpp34_utils:receive_data(tx, Acc, Value) end, esmpp34_utils:start_el_timer(State), Pdus),
@@ -336,14 +334,8 @@ bound_tx({send, Pdu, From, Sequence, Status}, _, #state{} = State) ->
       Reason :: term().
 
 
-bound_rx(enquire_link, #state{socket = Socket, seq = Seq, response_timers = Timers} = State) ->
-    NewState = esmpp34_utils:start_el_timer(State),
-    Req = #enquire_link{},
-    Code = ?ESME_ROK,
-    gen_tcp:send(Socket, esmpp34raw:pack_single(Req, Code, Seq)),
-    Timer = erlang:send_after(30000, self(), {timeout, Seq, enquire_link}), %% TODO: interval from config
-    NewTimers = dict:store(Seq, Timer, Timers),
-    {next_state, bound_tx, NewState#state{response_timers = NewTimers, seq = Seq + 1}};
+bound_rx(enquire_link, #state{} = State) ->
+    {next_state, bound_tx, esmpp34_utils:send_enquire_link(State)};
 
 bound_rx({data, Pdus, _}, #state{} = State) ->
     NewState = lists:foldl(fun(Value, Acc) -> esmpp34_utils:receive_data(tx, Acc, Value) end, esmpp34_utils:start_el_timer(State), Pdus),
@@ -484,23 +476,22 @@ handle_info({tcp, Socket,  Bin}, StateName, #state{data = OldData} = StateData) 
     inet:setopts(Socket, [{active, once}]),
     Result;
 
-handle_info({timeout, Seq, enquire_link}, _, #state{response_timers = Timers} = State) ->
+handle_info({timeout, Seq, enquire_link}, _, #state{} = State) ->
     io:format("Timeout for enquire_link ~p~n", [Seq]),
-    {_, NewTimers} = esmpp34_utils:cancel_timeout(Seq, Timers),
-    {stop, normal, State#state{response_timers = NewTimers}}; %% FIXME: why stop?
+    {stop, normal, esmpp34_utils:handle_enquire_link_resp(State)};
 
 handle_info({timeout, _Seq} = Msg, StateName, #state{} = State) ->
     ?MODULE:StateName(Msg, State);
 
 handle_info({tcp_closed, _Socket}, _StateName, #state{response_timers = Timers} = State) ->
     io:format("Socket closed, cancelling timers...~n"),
-    lists:foreach(fun(Timer) -> erlang:cancel_timer(Timer) end, dict:to_list(Timers)),
+    lists:foreach(fun(Timer) -> timer:cancel(Timer) end, dict:to_list(Timers)),
     {stop, normal, State#state{response_timers = []}};
 
 handle_info({tcp_error, _Socket}, _StateName, #state{response_timers = Timers} = State) ->
     %% FIXME: maybe do no close
     io:format("Socket closed, cancelling timers...~n"),
-    lists:foreach(fun(Timer) -> erlang:cancel_timer(Timer) end, dict:to_list(Timers)),
+    lists:foreach(fun(Timer) -> timer:cancel(Timer) end, dict:to_list(Timers)),
     {stop, normal, State#state{response_timers = []}};
 
 handle_info({'DOWN', _MonitorRef, process, DownPid, _}, _StateName, #state{dir_pid = {Pid, _Ref}}) when DownPid == Pid ->

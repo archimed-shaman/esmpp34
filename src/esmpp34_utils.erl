@@ -48,6 +48,9 @@
 	 receive_data/3,
          receive_timeout/2,
 	 start_el_timer/1,
+         send_enquire_link/1,
+         handle_enquire_link_req/2,
+         handle_enquire_link_resp/1,
          do_recv/3,
          reject_smpp/3
         ]).
@@ -73,7 +76,7 @@
 cancel_timeout(Seq, Timers) ->
     case dict:find(Seq, Timers) of
         {ok, {From, Timer}} ->
-            erlang:cancel_timer(Timer),
+            timer:cancel(Timer),
             {From, dict:erase(Seq, Timers)};
         error ->
             {undefined, Timers}
@@ -95,7 +98,7 @@ cancel_timeout(Seq, Timers) ->
 
 
 run_timer(Seq, From, Timers) ->
-    Timer = erlang:send_after(30000, self(), {timeout, Seq}), %% TODO: interval from config
+    Timer = timer:send_after(30000, self(), {timeout, Seq}), %% TODO: interval from config
     dict:store(Seq, {From, Timer}, Timers).
 
 
@@ -156,15 +159,11 @@ resolver(Host) ->
 
 receive_data(_, #state{} = State, #pdu{body = #enquire_link_resp{}}) ->
     io:format("Received enquire_link_resp~n"),
-    start_el_timer(State);
+    handle_enquire_link_resp(State);
 
-receive_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #enquire_link{}}) ->
-    %% TODO: cancel enquire_link timer
+receive_data(_, #state{} = State, #pdu{sequence_number = Seq, body = #enquire_link{}}) ->
     io:format("Received enquire_link_req~n"),
-    Resp = #enquire_link_resp{},
-    Code = ?ESME_ROK,
-    gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
-    start_el_timer(State);
+    handle_enquire_link_req(State, Seq);
 
 receive_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, body = #unbind{}}) ->
     %% TODO: stop
@@ -326,6 +325,52 @@ send_data(Mode, #state{socket = Socket, response_timers = Timers} = State, Body,
 
 %%--------------------------------------------------------------------
 %% @doc
+%% Reject the specified packet with generic_nack
+%% @end
+%%--------------------------------------------------------------------
+
+-spec reject_smpp(Socket, Sequence, Code) -> ok | {error, Reason} when
+      Socket :: gen_tcp:socket(),
+      Sequence :: non_neg_integer(),
+      Code :: non_neg_integer(),
+      Reason :: closed | inet:posix().
+
+
+reject_smpp(Socket, Sequence, Code) ->
+    Resp = #generic_nack{},
+    gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Sequence)).
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Receive data from socket in passive mode
+%% @end
+%%--------------------------------------------------------------------
+
+-spec do_recv(Socket, Accumulator, Counter) -> RecvData when
+      Socket :: gen_tcp:socket(),
+      Accumulator :: [] | [binary()],
+      Counter :: non_neg_integer(),
+      RecvData :: [] | [binary()].
+
+
+do_recv(Socket, Accumulator, Counter) when Counter > 0 ->
+    %% io:format("do recv(~p, ~p, ~p)~n", [Socket, Accumulator, Counter]),
+    case gen_tcp:recv(Socket, 65535, 10) of
+        {ok, Data} ->
+            do_recv(Socket, [Data | Accumulator], Counter - 1);
+        {error, _} ->
+            lists:reverse(Accumulator)
+    end;
+
+do_recv(_Socket, Accumulator, _Counter) ->
+    lists:reverse(Accumulator).
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
 %% (Re)start the enquire link interval timer
 %% @end
 %%--------------------------------------------------------------------
@@ -336,13 +381,71 @@ send_data(Mode, #state{socket = Socket, response_timers = Timers} = State, Body,
 
 
 start_el_timer(#state{el_timer = Timer, connection = #smpp_entity{el_interval = Interval}} = State) when Timer /= undefined->
-    erlang:cancel_timer(Timer),
-    NewTimer = erlang:send_after(Interval, self(), enquire_link),
+    timer:cancel(Timer),
+    NewTimer = timer:send_after(Interval, self(), enquire_link),
     State#state{el_timer = NewTimer};
 
 start_el_timer(#state{connection = #smpp_entity{el_interval = Interval}} = State) ->
-    Timer = erlang:send_after(Interval, self(), enquire_link),
+    Timer = timer:send_after(Interval, self(), enquire_link),
     State#state{el_timer = Timer}.
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Send enquire_link request. If there is active request, do nothing
+%% @end
+%%--------------------------------------------------------------------
+
+-spec send_enquire_link(State) -> NewState when
+      State :: #state{},
+      NewState :: #state{}.
+
+
+send_enquire_link(#state{el_timer_resp = OldTimer, socket = Socket, seq = Seq} = State) when OldTimer == undefined ->
+    Req = #enquire_link{},
+    gen_tcp:send(Socket, esmpp34raw:pack_single(Req, ?ESME_ROK, Seq)),
+    Timer = timer:send_after(10000, self(), {timeout, Seq, enquire_link}), %% TODO: interval from config
+    State#state{el_timer_resp = Timer, seq = Seq + 1};
+
+send_enquire_link(#state{} = State) ->
+    State.
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Proceed enquire_link request
+%% @end
+%%--------------------------------------------------------------------
+
+-spec handle_enquire_link_req(State, Seq) -> NewState when
+      State :: #state{},
+      Seq :: non_neg_integer(),
+      NewState :: #state{}.
+
+
+handle_enquire_link_req(#state{socket = Socket} = State, Seq) ->
+    Resp = #enquire_link_resp{},
+    gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, ?ESME_ROK, Seq)),
+    start_el_timer(State).
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Proceed enquire_link response or timeout
+%% @end
+%%--------------------------------------------------------------------
+
+-spec handle_enquire_link_resp(State) -> NewState when
+      State :: #state{},
+      NewState :: #state{}.
+
+
+handle_enquire_link_resp(#state{el_timer_resp = OldTimer} = State) ->
+    timer:cancel(OldTimer),
+    esmpp34_utils:start_el_timer(State).
 
 
 
@@ -590,26 +693,6 @@ is_response(_) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Reject the specified packet with generic_nack
-%% @end
-%%--------------------------------------------------------------------
-
--spec reject_smpp(Socket, Sequence, Code) -> ok | {error, Reason} when
-      Socket :: gen_tcp:socket(),
-      Sequence :: non_neg_integer(),
-      Code :: non_neg_integer(),
-      Reason :: closed | inet:posix().
-
-
-reject_smpp(Socket, Sequence, Code) ->
-    Resp = #generic_nack{},
-    gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Sequence)).
-
-
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
 %% Send the SMPP PDU to socket. Status is ESME_ROK.
 %% @end
 %%--------------------------------------------------------------------
@@ -645,31 +728,3 @@ send_smpp(Socket, Packet, Sequence) ->
 
 send_smpp(Socket, Packet, Sequence, Status) ->
     gen_tcp:send(Socket, esmpp34raw:pack_single(Packet, Status, Sequence)).
-
-
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Receive data from socket in passive mode
-%% @end
-%%--------------------------------------------------------------------
-
--spec do_recv(Socket, Accumulator, Counter) -> RecvData when
-      Socket :: gen_tcp:socket(),
-      Accumulator :: [] | [binary()],
-      Counter :: non_neg_integer(),
-      RecvData :: [] | [binary()].
-
-
-do_recv(Socket, Accumulator, Counter) when Counter > 0 ->
-    %% io:format("do recv(~p, ~p, ~p)~n", [Socket, Accumulator, Counter]),
-    case gen_tcp:recv(Socket, 65535, 10) of
-        {ok, Data} ->
-            do_recv(Socket, [Data | Accumulator], Counter - 1);
-        {error, _} ->
-            lists:reverse(Accumulator)
-    end;
-
-do_recv(_Socket, Accumulator, _Counter) ->
-    lists:reverse(Accumulator).

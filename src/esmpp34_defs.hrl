@@ -43,7 +43,8 @@
                  mode,
                  seq = 0,
                  dir_pid,
-		 el_timer }).
+		 el_timer,
+                 el_timer_resp }).
 
 -define(VERSION, "1.0.0 alpha").
 

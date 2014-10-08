@@ -42,7 +42,8 @@
 -export([start_link/4]).
 
 %% gen_fsm callbacks
--export([init/1,
+-export([
+         init/1,
          open/2,
          open_bind_resp/2,
          state_name/3,
@@ -50,7 +51,8 @@
          handle_sync_event/4,
          handle_info/3,
          terminate/3,
-         code_change/4]).
+         code_change/4
+        ]).
 
 -define(SERVER, ?MODULE).
 
@@ -65,12 +67,12 @@
 %% Creates a gen_fsm process which calls Module:init/1 to
 %% initialize. To ensure a synchronized start-up procedure, this
 %% function does not return until Module:init/1 has returned.
-%%
 %% @end
 %%--------------------------------------------------------------------
 
 start_link(Host, Port, Entity, Mode) ->
     gen_fsm:start_link(?MODULE, [{host, Host}, {port, Port}, {connection, Entity}, {mode, Mode}], []).
+
 
 
 %%%===================================================================
@@ -83,13 +85,15 @@ start_link(Host, Port, Entity, Mode) ->
 %% Whenever a gen_fsm is started using gen_fsm:start/[3,4] or
 %% gen_fsm:start_link/[3,4], this function is called by the new
 %% process to initialize.
-%%
 %% @end
 %%--------------------------------------------------------------------
+
 -spec(init(Args :: term()) ->
              {ok, StateName :: atom(), StateData :: #state{}} |
              {ok, StateName :: atom(), StateData :: #state{}, timeout() | hibernate} |
              {stop, Reason :: term()} | ignore).
+
+
 init(Args) ->
     Connection = proplists:get_value(connection, Args),
     Host = proplists:get_value(host, Args),
@@ -97,6 +101,7 @@ init(Args) ->
     Mode = proplists:get_value(mode, Args),
     io:format("Connecting to ~p:~p~n", [Host,Port]),
     starter(Host, Port, #state{host = Host, port = Port, connection = Connection, mode = Mode}).
+
 
 
 %%--------------------------------------------------------------------
@@ -107,7 +112,6 @@ init(Args) ->
 %% gen_fsm:send_event/2, the instance of this function with the same
 %% name as the current state name StateName is called to handle
 %% the event. It is also called if a timeout occurs.
-%%
 %% @end
 %%--------------------------------------------------------------------
 
@@ -157,13 +161,27 @@ open(bind, #state{ socket = Socket,
                          %% address_range      = []
                         },
     gen_tcp:send(Socket, esmpp34raw:pack_single(Req, ?ESME_ROK, Seq)),
-    {next_state, open_bind_resp, State#state{seq = Seq + 1}, 10000}. %% TODO: timeout from config
+    {next_state, open_bind_resp, State#state{seq = Seq + 1}, 10000}; %% TODO: timeout from config
+
+open({data, Pdus, UnknownPdus}, #state{socket = Socket} = State) ->
+    lists:foreach(fun(#pdu{sequence_number = Seq}) ->
+                          esmpp34_utils:reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS)
+                  end, Pdus ++ UnknownPdus),
+    {next_state, open, State}.
 
 
 
 
 
-open_bind_resp({data, [#pdu{} = Resp | _KnownPDU], _UnknownPDU}, #state{ connection = #smpp_entity{id = Id},
+open_bind_resp({data, [], UnknownPdus}, #state{socket = Socket} = State) ->
+    lists:foreach(fun(#pdu{sequence_number = Seq}) ->
+                          esmpp34_utils:reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS)
+                  end, UnknownPdus),
+    %% FIXME: potential bug. If other side sends data continiously without bind_resp,
+    %% timeout will newer appear. Maybe, add stand-alone timer.
+    {next_state, open_bind_resp, State, 10000};
+
+open_bind_resp({data, [#pdu{} = Resp | KnownPDUs], UnknownPDUs}, #state{ connection = #smpp_entity{id = Id},
                                                                          socket = Socket,
                                                                          mode = Mode } = State) -> %% FIXME: proceed other known PDU
     case proceed_bind_resp(Resp, Mode) of
@@ -172,7 +190,8 @@ open_bind_resp({data, [#pdu{} = Resp | _KnownPDU], _UnknownPDU}, #state{ connect
                 {ok, DirPid} ->
                     io:format("Connected!~n"),
                     Ref = erlang:monitor(process, DirPid),
-                    {next_state, NextState, State#state{dir_pid = {DirPid, Ref}}};
+                    NewState = esmpp34_utils:start_el_timer(State),
+                    NextState({data, KnownPDUs, UnknownPDUs}, NewState#state{dir_pid = {DirPid, Ref}});
                 {error, _Reason} ->
                     {stop, normal, State}
             end;
@@ -182,13 +201,14 @@ open_bind_resp({data, [#pdu{} = Resp | _KnownPDU], _UnknownPDU}, #state{ connect
         {unknown_command, Seq, CommandId, _Status} ->
             io:format("Received unknown PDU in unbinded: ~p~n", [CommandId]),
             esmpp34_utils:reject_smpp(Socket, Seq, ?ESME_RINVBNDSTS),
-            {next_state, open_bind_resp, State}
+            open_bind_resp({date, KnownPDUs, UnknownPDUs}, State)
     end;
 
 open_bind_resp(timeout, #state{socket = Socket} = State) ->
     io:format("session init timeout~n"),
     gen_tcp:close(Socket),
     {stop, {error, bind_timeout}, State}.
+
 
 
 
@@ -202,6 +222,7 @@ open_bind_resp(timeout, #state{socket = Socket} = State) ->
 %% handle the event.
 %% @end
 %%--------------------------------------------------------------------
+
 -spec(state_name(Event :: term(), From :: {pid(), term()},
                  State :: #state{}) ->
              {next_state, NextStateName :: atom(), NextState :: #state{}} |
@@ -214,9 +235,12 @@ open_bind_resp(timeout, #state{socket = Socket} = State) ->
              {stop, Reason :: normal | term(), Reply :: term(),
               NewState :: #state{}}).
 
+
 state_name(_Event, _From, State) ->
     Reply = ok,
     {reply, Reply, state_name, State}.
+
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -227,6 +251,7 @@ state_name(_Event, _From, State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+
 -spec(handle_event(Event :: term(), StateName :: atom(),
                    StateData :: #state{}) ->
              {next_state, NextStateName :: atom(), NewStateData :: #state{}} |
@@ -234,8 +259,11 @@ state_name(_Event, _From, State) ->
               timeout() | hibernate} |
              {stop, Reason :: term(), NewStateData :: #state{}}).
 
+
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
+
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -246,6 +274,7 @@ handle_event(_Event, StateName, State) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
+
 -spec(handle_sync_event(Event :: term(), From :: {pid(), Tag :: term()},
                         StateName :: atom(), StateData :: term()) ->
              {reply, Reply :: term(), NextStateName :: atom(), NewStateData :: term()} |
@@ -256,9 +285,13 @@ handle_event(_Event, StateName, State) ->
               timeout() | hibernate} |
              {stop, Reason :: term(), Reply :: term(), NewStateData :: term()} |
              {stop, Reason :: term(), NewStateData :: term()}).
+
+
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
+
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -266,9 +299,9 @@ handle_sync_event(_Event, _From, StateName, State) ->
 %% This function is called by a gen_fsm when it receives any
 %% message other than a synchronous or asynchronous event
 %% (or a system message).
-%%
 %% @end
 %%--------------------------------------------------------------------
+
 -spec(handle_info(Info :: term(), StateName :: atom(),
                   StateData :: term()) ->
              {next_state, NextStateName :: atom(), NewStateData :: term()} |
@@ -276,6 +309,8 @@ handle_sync_event(_Event, _From, StateName, State) ->
               timeout() | hibernate} |
              {stop, Reason :: normal | term(), NewStateData :: term()}).
 
+
+%% 'bind' is sent in starter
 handle_info(bind, StateName, #state{} = StateData) ->
     ?MODULE:StateName(bind, StateData);
 
@@ -288,22 +323,25 @@ handle_info({tcp, Socket,  Bin}, StateName, #state{data = OldData} = StateData) 
     inet:setopts(Socket, [{active, once}]),
     Result;
 
-handle_info({timeout, Seq}, StateName, #state{response_timers = Timers} = State) ->
-    {_, NewTimers} = esmpp34_utils:cancel_timeout(Seq, Timers),
-    %% TODO: send error to logic
-    {next_state, StateName, State#state{response_timers = NewTimers}};
+handle_info({timeout, Seq, enquire_link}, _, #state{} = State) ->
+    io:format("Timeout for enquire_link ~p~n", [Seq]),
+    {stop, {error, enquire_link_timeout}, esmpp34_utils:handle_enquire_link_resp(State)};
 
+handle_info({timeout, _Seq} = Msg, StateName, #state{} = State) ->
+    ?MODULE:StateName(Msg, State);
 
 handle_info({tcp_closed, _Socket}, _StateName, #state{response_timers = Timers} = State) ->
     io:format("Socket closed, cancelling timers...~n"),
-    lists:foreach(fun(Timer) -> erlang:cancel_timer(Timer) end, dict:to_list(Timers)),
+    lists:foreach(fun(Timer) -> timer:cancel(Timer) end, dict:to_list(Timers)),
     {stop, normal, State#state{response_timers = []}}; %% FIXME: reconnect
 
 handle_info({'DOWN', _MonitorRef, process, DownPid, _}, _StateName, #state{dir_pid = {Pid, _Ref}}) when DownPid == Pid ->
     {stop, normal};
 
-handle_info(_Info, StateName, State) ->
-    {next_state, StateName, State}.
+handle_info(enquire_link, StateName, #state{} = State) ->
+    ?MODULE:StateName(enquire_link, State).
+
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -312,30 +350,54 @@ handle_info(_Info, StateName, State) ->
 %% terminate. It should be the opposite of Module:init/1 and do any
 %% necessary cleaning up. When it returns, the gen_fsm terminates with
 %% Reason. The return value is ignored.
-%%
 %% @end
 %%--------------------------------------------------------------------
+
 -spec(terminate(Reason :: normal | shutdown | {shutdown, term()}
                         | term(), StateName :: atom(), StateData :: term()) -> term()).
+
+
 terminate(_Reason, _StateName, _State) ->
     ok.
+
+
 
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
 %% Convert process state when code is changed
-%%
 %% @end
 %%--------------------------------------------------------------------
+
 -spec(code_change(OldVsn :: term() | {down, term()}, StateName :: atom(),
                   StateData :: #state{}, Extra :: term()) ->
              {ok, NextStateName :: atom(), NewStateData :: #state{}}).
+
+
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
+
+
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Initialize gen_server state, connect to host, etc.
+%% @end
+%%--------------------------------------------------------------------
+
+-spec starter(Host, Port, State) -> {ok, StateName, NewState} |
+                                    {stop, Reason} when
+      Host :: string(),
+      Port :: inet:port_number(),
+      State :: #state{},
+      StateName :: open,
+      NewState :: #state{},
+      Reason :: term().
 
 
 starter(Host, Port, #state{} = State) ->
@@ -345,7 +407,7 @@ starter(Host, Port, #state{} = State) ->
             case gen_tcp:connect(IpAddress, Port, Options, 30000) of %% TODO: timeout from config?
                 {ok, Socket} ->
                     io:format("Connected to ~p:~p~n", [Host,Port]),
-                    erlang:send_after(1, self(), bind),
+                    timer:send_after(1, self(), bind),
                     {ok, open, State#state{socket = Socket}};
                 {error, Reason} ->
                     io:format("TCP connect error start: ~p~n", [Reason]),
@@ -358,6 +420,22 @@ starter(Host, Port, #state{} = State) ->
 
 
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Proceed response for bind command with success or negative code
+%% @end
+%%--------------------------------------------------------------------
+
+-spec proceed_bind_resp(Pdu, Mode) -> {ok, StateName} |
+                                      {error, Status} |
+                                      {unknown_command, SequenceNumber, CommandId, Status} when
+      Pdu :: #pdu{},
+      Mode :: trx | tx | rx,
+      StateName :: bound_trx | bound_tx | bound_rx,
+      Status :: non_neg_integer(),
+      SequenceNumber :: non_neg_integer(),
+      CommandId :: non_neg_integer().
 
 
 proceed_bind_resp(#pdu{command_id = ?bind_transceiver_resp, command_status = Status}, Mode) when Mode == trx, Status == ?ESME_ROK ->

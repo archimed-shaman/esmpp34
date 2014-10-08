@@ -143,9 +143,9 @@ handle_info(accept_if_any, #state{timer = OldTimer,
                                   listener = Socket,
                                   connection_id = ConnectionId,
                                   connection = Connection} = State) ->
-    erlang:cancel_timer(OldTimer),
+    timer:cancel(OldTimer),
     LastConnectionId = accept_if_any(Socket, ConnectionId, Connection),
-    Timer = erlang:send_after(?ACCEPT_INTERVAL, self(), accept_if_any),
+    Timer = timer:send_after(?ACCEPT_INTERVAL, self(), accept_if_any),
     {noreply, State#state{timer = Timer, connection_id = LastConnectionId}};
 
 handle_info(_Info, State) ->
@@ -186,7 +186,7 @@ starter({all, Port}, #state{} = State) ->
     Options = [binary, {packet, raw}, {active, false}, {reuseaddr, true}],
     case gen_tcp:listen(Port, Options) of
         {ok, Socket} ->
-            Timer = erlang:send_after(?ACCEPT_INTERVAL, self(), accept_if_any),
+            Timer = timer:send_after(?ACCEPT_INTERVAL, self(), accept_if_any),
             {ok, State#state{timer = Timer, listener = Socket}};
         {error, Reason} ->
             io:format("TCP Listener error start: ~p~n", [Reason]),
@@ -200,7 +200,7 @@ starter ({Address, Port}, #state{} = State) ->
             Options = [binary, {ip, IpAddress}, {packet, raw}, {active, false}, {reuseaddr, true}],
             case gen_tcp:listen(Port, Options) of
                 {ok, Socket} ->
-                    Timer = erlang:send_after(?ACCEPT_INTERVAL, self(), accept_if_any),
+                    Timer = timer:send_after(?ACCEPT_INTERVAL, self(), accept_if_any),
                     {ok, State#state{timer = Timer, listener = Socket}};
                 {error, Reason}->
                     io:format("TCP Listener error start: ~p~n", [Reason]),
