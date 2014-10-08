@@ -73,7 +73,6 @@
 %% Creates a gen_fsm process which calls Module:init/1 to
 %% initialize. To ensure a synchronized start-up procedure, this
 %% function does not return until Module:init/1 has returned.
-%%
 %% @end
 %%--------------------------------------------------------------------
 
@@ -95,7 +94,6 @@ start_link(Id, Connection, Socket) ->
 %% Whenever a gen_fsm is started using gen_fsm:start/[3,4] or
 %% gen_fsm:start_link/[3,4], this function is called by the new
 %% process to initialize.
-%%
 %% @end
 %%--------------------------------------------------------------------
 
@@ -147,7 +145,7 @@ open({data, [], UnknownPdus}, #state{socket = Socket} = State) ->
 open({data, [Head | Tail], UnknownPdus}, #state{} = State) ->
     case proceed_open(State, Head) of
         {next_state, StateName, NewState} ->
-            StateName({data, Tail, UnknownPdus}, NewState);
+            ?MODULE:StateName({data, Tail, UnknownPdus}, NewState);
         {stop, _, _} = StopResult ->
             StopResult
     end.
@@ -485,13 +483,13 @@ handle_info({timeout, _Seq} = Msg, StateName, #state{} = State) ->
 
 handle_info({tcp_closed, _Socket}, _StateName, #state{response_timers = Timers} = State) ->
     io:format("Socket closed, cancelling timers...~n"),
-    lists:foreach(fun(Timer) -> timer:cancel(Timer) end, dict:to_list(Timers)),
+    lists:foreach(fun(Timer) -> erlang:cancel_timer(Timer) end, dict:to_list(Timers)),
     {stop, normal, State#state{response_timers = []}};
 
 handle_info({tcp_error, _Socket}, _StateName, #state{response_timers = Timers} = State) ->
     %% FIXME: maybe do no close
     io:format("Socket closed, cancelling timers...~n"),
-    lists:foreach(fun(Timer) -> timer:cancel(Timer) end, dict:to_list(Timers)),
+    lists:foreach(fun(Timer) -> erlang:cancel_timer(Timer) end, dict:to_list(Timers)),
     {stop, normal, State#state{response_timers = []}};
 
 handle_info({'DOWN', _MonitorRef, process, DownPid, _}, _StateName, #state{dir_pid = {Pid, _Ref}}) when DownPid == Pid ->

@@ -337,7 +337,7 @@ handle_info({'DOWN', MonitorRef, process, DownPid, _}, #state{pid_dict = PidDict
                                  %% directions are down
 
                                  lists:foreach(fun(Pid) -> erlang:exit(Pid, direction_down) end, ConnPids),
-                                 dict:update(DirId, DirRec#dir_record{pid = null, connection_pid = []}, DirDict);
+                                 dict:store(DirId, DirRec#dir_record{pid = null, connection_pid = []}, DirDict);
                              error ->
                                  DirDict
                          end,

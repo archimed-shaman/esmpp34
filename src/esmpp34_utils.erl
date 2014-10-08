@@ -76,7 +76,7 @@
 cancel_timeout(Seq, Timers) ->
     case dict:find(Seq, Timers) of
         {ok, {From, Timer}} ->
-            timer:cancel(Timer),
+            erlang:cancel_timer(Timer),
             {From, dict:erase(Seq, Timers)};
         error ->
             {undefined, Timers}
@@ -98,7 +98,7 @@ cancel_timeout(Seq, Timers) ->
 
 
 run_timer(Seq, From, Timers) ->
-    Timer = timer:send_after(30000, self(), {timeout, Seq}), %% TODO: interval from config
+    Timer = erlang:send_after(30000, self(), {timeout, Seq}), %% TODO: interval from config
     dict:store(Seq, {From, Timer}, Timers).
 
 
@@ -195,7 +195,7 @@ receive_data(_, #state{socket = Socket} = State, #pdu{sequence_number = Seq, bod
     State;
 
 receive_data(Mode, #state{response_timers = Timers,
-                          dir_pid = {Pid, _},
+                          dir_pid = {DirPid, _},
                           socket = Socket} = State, #pdu{sequence_number = Seq, body = Body} = Pdu) ->
     IsAllowed = is_allowed(Mode, Body),
     case is_response(Body) of
@@ -210,7 +210,7 @@ receive_data(Mode, #state{response_timers = Timers,
             State;
         false when IsAllowed ->
             %% it is a request and it is allowed; send it to direction
-            gen_server:call(Pid, {receive_data, Pdu}), %% FIXME: handle data in direction
+            gen_server:call(DirPid, {receive_data, Pdu}), %% FIXME: handle data in direction
             State;
         _ ->
             %% all other cases, in fact - disallowed request; reject it
@@ -381,12 +381,12 @@ do_recv(_Socket, Accumulator, _Counter) ->
 
 
 start_el_timer(#state{el_timer = Timer, connection = #smpp_entity{el_interval = Interval}} = State) when Timer /= undefined->
-    timer:cancel(Timer),
-    NewTimer = timer:send_after(Interval, self(), enquire_link),
+    erlang:cancel_timer(Timer),
+    NewTimer = erlang:send_after(Interval, self(), enquire_link),
     State#state{el_timer = NewTimer};
 
 start_el_timer(#state{connection = #smpp_entity{el_interval = Interval}} = State) ->
-    Timer = timer:send_after(Interval, self(), enquire_link),
+    Timer = erlang:send_after(Interval, self(), enquire_link),
     State#state{el_timer = Timer}.
 
 
@@ -405,7 +405,7 @@ start_el_timer(#state{connection = #smpp_entity{el_interval = Interval}} = State
 send_enquire_link(#state{el_timer_resp = OldTimer, socket = Socket, seq = Seq} = State) when OldTimer == undefined ->
     Req = #enquire_link{},
     gen_tcp:send(Socket, esmpp34raw:pack_single(Req, ?ESME_ROK, Seq)),
-    Timer = timer:send_after(10000, self(), {timeout, Seq, enquire_link}), %% TODO: interval from config
+    Timer = erlang:send_after(10000, self(), {timeout, Seq, enquire_link}), %% TODO: interval from config
     State#state{el_timer_resp = Timer, seq = Seq + 1};
 
 send_enquire_link(#state{} = State) ->
@@ -444,8 +444,8 @@ handle_enquire_link_req(#state{socket = Socket} = State, Seq) ->
 
 
 handle_enquire_link_resp(#state{el_timer_resp = OldTimer} = State) ->
-    timer:cancel(OldTimer),
-    esmpp34_utils:start_el_timer(State).
+    erlang:cancel_timer(OldTimer),
+    esmpp34_utils:start_el_timer(State#state{el_timer_resp = undefined}).
 
 
 

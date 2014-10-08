@@ -46,7 +46,12 @@
          init/1,
          open/2,
          open_bind_resp/2,
-         state_name/3,
+         bound_trx/2,
+         bound_tx/2,
+         bound_rx/2,
+         bound_trx/3,
+         bound_tx/3,
+         bound_rx/3,
          handle_event/3,
          handle_sync_event/4,
          handle_info/3,
@@ -107,13 +112,20 @@ init(Args) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% There should be one instance of this function for each possible
-%% state name. Whenever a gen_fsm receives an event sent using
-%% gen_fsm:send_event/2, the instance of this function with the same
-%% name as the current state name StateName is called to handle
-%% the event. It is also called if a timeout occurs.
+%% Handle open state.
 %% @end
 %%--------------------------------------------------------------------
+
+-spec open(Event, State) -> {next_state, NextStateName, NextState} |
+                            {next_state, NextStateName, NextState, timeout() | hibernate} |
+                            {stop, Reason, NewState} when
+      Event :: term(),
+      State :: #state{},
+      NextStateName :: atom(),
+      NextState :: #state{},
+      NewState :: #state{},
+      Reason :: term().
+
 
 open(bind, #state{ socket = Socket,
                    mode = Mode,
@@ -171,6 +183,22 @@ open({data, Pdus, UnknownPdus}, #state{socket = Socket} = State) ->
 
 
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handle open_bind_resp state.
+%% @end
+%%--------------------------------------------------------------------
+
+-spec open_bind_resp(Event, State) -> {next_state, NextStateName, NextState} |
+                            {next_state, NextStateName, NextState, timeout() | hibernate} |
+                            {stop, Reason, NewState} when
+      Event :: term(),
+      State :: #state{},
+      NextStateName :: atom(),
+      NextState :: #state{},
+      NewState :: #state{},
+      Reason :: term().
 
 
 open_bind_resp({data, [], UnknownPdus}, #state{socket = Socket} = State) ->
@@ -183,7 +211,7 @@ open_bind_resp({data, [], UnknownPdus}, #state{socket = Socket} = State) ->
 
 open_bind_resp({data, [#pdu{} = Resp | KnownPDUs], UnknownPDUs}, #state{ connection = #smpp_entity{id = Id},
                                                                          socket = Socket,
-                                                                         mode = Mode } = State) -> %% FIXME: proceed other known PDU
+                                                                         mode = Mode } = State) ->
     case proceed_bind_resp(Resp, Mode) of
         {ok, NextState} ->
             case esmpp34_manager:register_connection(Id, Mode) of
@@ -191,7 +219,7 @@ open_bind_resp({data, [#pdu{} = Resp | KnownPDUs], UnknownPDUs}, #state{ connect
                     io:format("Connected!~n"),
                     Ref = erlang:monitor(process, DirPid),
                     NewState = esmpp34_utils:start_el_timer(State),
-                    NextState({data, KnownPDUs, UnknownPDUs}, NewState#state{dir_pid = {DirPid, Ref}});
+                    ?MODULE:NextState({data, KnownPDUs, UnknownPDUs}, NewState#state{dir_pid = {DirPid, Ref}});
                 {error, _Reason} ->
                     {stop, normal, State}
             end;
@@ -211,34 +239,247 @@ open_bind_resp(timeout, #state{socket = Socket} = State) ->
 
 
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handle bound_trx state.
+%% @end
+%%--------------------------------------------------------------------
+
+-spec bound_trx(Event, State) -> {next_state, NextStateName, NextState} |
+                                 {next_state, NextStateName, NextState, timeout() | hibernate} |
+                                 {stop, Reason, NewState} when
+      Event :: term(),
+      State :: #state{},
+      NextStateName :: atom(),
+      NextState :: #state{},
+      NewState :: #state{},
+      Reason :: term().
+
+
+bound_trx(enquire_link, #state{} = State) ->
+    {next_state, bound_trx, esmpp34_utils:send_enquire_link(State)};
+
+bound_trx({data, Pdus, _}, #state{} = State) ->
+    NewState = lists:foldl(fun(Value, Acc) -> esmpp34_utils:receive_data(trx, Acc, Value) end, esmpp34_utils:start_el_timer(State), Pdus),
+    %% TODO: handle packets to change state
+    {next_state, bound_trx, NewState};
+
+bound_trx({timeout, Seq}, #state{} = State) ->
+    io:format("Timeout for sequence ~p~n", [Seq]),
+    NewState = esmpp34_utils:receive_timeout(Seq, State),
+    {next_state, bound_trx, NewState}.
+
+
 
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% There should be one instance of this function for each possible
-%% state name. Whenever a gen_fsm receives an event sent using
-%% gen_fsm:sync_send_event/[2,3], the instance of this function with
-%% the same name as the current state name StateName is called to
-%% handle the event.
+%% Handle bound_trx state.
 %% @end
 %%--------------------------------------------------------------------
 
--spec(state_name(Event :: term(), From :: {pid(), term()},
-                 State :: #state{}) ->
-             {next_state, NextStateName :: atom(), NextState :: #state{}} |
-             {next_state, NextStateName :: atom(), NextState :: #state{},
-              timeout() | hibernate} |
-             {reply, Reply, NextStateName :: atom(), NextState :: #state{}} |
-             {reply, Reply, NextStateName :: atom(), NextState :: #state{},
-              timeout() | hibernate} |
-             {stop, Reason :: normal | term(), NewState :: #state{}} |
-             {stop, Reason :: normal | term(), Reply :: term(),
-              NewState :: #state{}}).
+-spec bound_trx(Event, From, State) -> {next_state, NextStateName, NextState} |
+                                       {next_state, NextStateName, NextState, timeout() | hibernate} |
+                                       {reply, Reply, NextStateName, NextState} |
+                                       {reply, Reply, NextStateName, NextState, timeout() | hibernate} |
+                                       {stop, Reason, NewState} |
+                                       {stop, Reason, Reply, NewState} when
+      Event :: term(),
+      From :: {pid(), term()},
+      State :: #state{},
+      NextStateName :: atom(),
+      NextState :: #state{},
+      NewState :: #state{},
+      Reply :: term().
 
 
-state_name(_Event, _From, State) ->
-    Reply = ok,
-    {reply, Reply, state_name, State}.
+bound_trx({send, Pdu, From}, _, #state{seq = Seq} = State) ->
+    case esmpp34_utils:send_data(trx, State#state{seq = Seq + 1}, Pdu, From, Seq) of
+        {ok, NewState} ->
+            {reply, ok, bound_trx, NewState};
+        {error, _} = E ->
+            {reply, E, bound_trx, State}
+    end;
+
+bound_trx({send, Pdu, From, Sequence}, _, #state{} = State) ->
+    case esmpp34_utils:send_data(trx, State, Pdu, From, Sequence) of
+        {ok, NewState} ->
+            {reply, ok, bound_trx, NewState};
+        {error, _} = E ->
+            {reply, E, bound_trx, State}
+    end;
+
+bound_trx({send, Pdu, From, Sequence, Status}, _, #state{} = State) ->
+    case esmpp34_utils:send_data(trx, State, Pdu, From, Sequence, Status) of
+        {ok, NewState} ->
+            {reply, ok, bound_trx, NewState};
+        {error, _} = E ->
+            {reply, E, bound_trx, State}
+    end.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handle bound_tx state.
+%% @end
+%%--------------------------------------------------------------------
+
+-spec bound_tx(Event, State) -> {next_state, NextStateName, NextState} |
+                                {next_state, NextStateName, NextState, timeout() | hibernate} |
+                                {stop, Reason, NewState} when
+      Event :: term(),
+      State :: #state{},
+      NextStateName :: atom(),
+      NextState :: #state{},
+      NewState :: #state{},
+      Reason :: term().
+
+
+bound_tx(enquire_link, #state{} = State) ->
+    {next_state, bound_tx, esmpp34_utils:send_enquire_link(State)};
+
+bound_tx({data, Pdus, _}, #state{} = State) ->
+    NewState = lists:foldl(fun(Value, Acc) -> esmpp34_utils:receive_data(tx, Acc, Value) end, esmpp34_utils:start_el_timer(State), Pdus),
+    %% TODO: handle packets to change state
+    {next_state, bound_tx, NewState};
+
+bound_tx({timeout, Seq}, #state{} = State) ->
+    io:format("Timeout for sequence ~p~n", [Seq]),
+    NewState = esmpp34_utils:receive_timeout(Seq, State),
+    {next_state, bound_tx, NewState}.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handle bound_tx state.
+%% @end
+%%--------------------------------------------------------------------
+
+-spec bound_tx(Event, From, State) -> {next_state, NextStateName, NextState} |
+                                      {next_state, NextStateName, NextState, timeout() | hibernate} |
+                                      {reply, Reply, NextStateName, NextState} |
+                                      {reply, Reply, NextStateName, NextState, timeout() | hibernate} |
+                                      {stop, Reason, NewState} |
+                                      {stop, Reason, Reply, NewState} when
+      Event :: term(),
+      From :: {pid(), term()},
+      State :: #state{},
+      NextStateName :: atom(),
+      NextState :: #state{},
+      NewState :: #state{},
+      Reply :: term().
+
+
+bound_tx({send, Pdu, From}, _, #state{seq = Seq} = State) ->
+    case esmpp34_utils:send_data(tx, State#state{seq = Seq + 1}, Pdu, From, Seq) of
+        {ok, NewState} ->
+            {reply, ok, bound_tx, NewState};
+        {error, _} = E ->
+            {reply, E, bound_tx, State}
+    end;
+
+bound_tx({send, Pdu, From, Sequence}, _, #state{} = State) ->
+    case esmpp34_utils:send_data(tx, State, Pdu, From, Sequence) of
+        {ok, NewState} ->
+            {reply, ok, bound_tx, NewState};
+        {error, _} = E ->
+            {reply, E, bound_tx, State}
+    end;
+
+bound_tx({send, Pdu, From, Sequence, Status}, _, #state{} = State) ->
+    case esmpp34_utils:send_data(tx, State, Pdu, From, Sequence, Status) of
+        {ok, NewState} ->
+            {reply, ok, bound_tx, NewState};
+        {error, _} = E ->
+            {reply, E, bound_tx, State}
+    end.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handle bound_rx state.
+%% @end
+%%--------------------------------------------------------------------
+
+-spec bound_rx(Event, State) -> {next_state, NextStateName, NextState} |
+                                {next_state, NextStateName, NextState, timeout() | hibernate} |
+                                {stop, Reason, NewState} when
+      Event :: term(),
+      State :: #state{},
+      NextStateName :: atom(),
+      NextState :: #state{},
+      NewState :: #state{},
+      Reason :: term().
+
+
+bound_rx(enquire_link, #state{} = State) ->
+    {next_state, bound_tx, esmpp34_utils:send_enquire_link(State)};
+
+bound_rx({data, Pdus, _}, #state{} = State) ->
+    NewState = lists:foldl(fun(Value, Acc) -> esmpp34_utils:receive_data(tx, Acc, Value) end, esmpp34_utils:start_el_timer(State), Pdus),
+    %% TODO: handle packets to change state
+    {next_state, bound_tx, NewState};
+
+bound_rx({timeout, Seq}, #state{} = State) ->
+    io:format("Timeout for sequence ~p~n", [Seq]),
+    NewState = esmpp34_utils:receive_timeout(Seq, State),
+    {next_state, bound_tx, NewState}.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handle bound_rx state.
+%% @end
+%%--------------------------------------------------------------------
+
+-spec bound_rx(Event, From, State) -> {next_state, NextStateName, NextState} |
+                                      {next_state, NextStateName, NextState, timeout() | hibernate} |
+                                      {reply, Reply, NextStateName, NextState} |
+                                      {reply, Reply, NextStateName, NextState, timeout() | hibernate} |
+                                      {stop, Reason, NewState} |
+                                      {stop, Reason, Reply, NewState} when
+      Event :: term(),
+      From :: {pid(), term()},
+      State :: #state{},
+      NextStateName :: atom(),
+      NextState :: #state{},
+      NewState :: #state{},
+      Reason :: term(),
+      Reply :: term().
+
+
+bound_rx({send, Pdu, From}, _, #state{seq = Seq} = State) ->
+    case esmpp34_utils:send_data(rx, State#state{seq = Seq + 1}, Pdu, From, Seq) of
+        {ok, NewState} ->
+            {reply, ok, bound_rx, NewState};
+        {error, _} = E ->
+            {reply, E, bound_rx, State}
+    end;
+
+bound_rx({send, Pdu, From, Sequence}, _, #state{} = State) ->
+    case esmpp34_utils:send_data(rx, State, Pdu, From, Sequence) of
+        {ok, NewState} ->
+            {reply, ok, bound_rx, NewState};
+        {error, _} = E ->
+            {reply, E, bound_rx, State}
+    end;
+
+bound_rx({send, Pdu, From, Sequence, Status}, _, #state{} = State) ->
+    case esmpp34_utils:send_data(rx, State, Pdu, From, Sequence, Status) of
+        {ok, NewState} ->
+            {reply, ok, bound_rx, NewState};
+        {error, _} = E ->
+            {reply, E, bound_rx, State}
+    end.
 
 
 
@@ -332,7 +573,7 @@ handle_info({timeout, _Seq} = Msg, StateName, #state{} = State) ->
 
 handle_info({tcp_closed, _Socket}, _StateName, #state{response_timers = Timers} = State) ->
     io:format("Socket closed, cancelling timers...~n"),
-    lists:foreach(fun(Timer) -> timer:cancel(Timer) end, dict:to_list(Timers)),
+    lists:foreach(fun(Timer) -> erlang:cancel_timer(Timer) end, dict:to_list(Timers)),
     {stop, normal, State#state{response_timers = []}}; %% FIXME: reconnect
 
 handle_info({'DOWN', _MonitorRef, process, DownPid, _}, _StateName, #state{dir_pid = {Pid, _Ref}}) when DownPid == Pid ->
@@ -407,7 +648,7 @@ starter(Host, Port, #state{} = State) ->
             case gen_tcp:connect(IpAddress, Port, Options, 30000) of %% TODO: timeout from config?
                 {ok, Socket} ->
                     io:format("Connected to ~p:~p~n", [Host,Port]),
-                    timer:send_after(1, self(), bind),
+                    erlang:send_after(1, self(), bind),
                     {ok, open, State#state{socket = Socket}};
                 {error, Reason} ->
                     io:format("TCP connect error start: ~p~n", [Reason]),

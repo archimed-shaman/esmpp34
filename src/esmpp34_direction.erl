@@ -201,7 +201,7 @@ send_data(DirPid, Data, Sequence, Status) ->
 init(Args) ->
     Direction = proplists:get_value(dir, Args),
     io:format("Direction #~p started~n", [Direction#smpp_entity.id]),
-    timer:send_after(1, self(), register),
+    erlang:send_after(1, self(), register),
     {ok, #state{dir = Direction}}.
 
 
