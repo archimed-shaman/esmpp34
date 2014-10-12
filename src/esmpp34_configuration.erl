@@ -39,38 +39,8 @@
 
 
 %%--------------------------------------------------------------------
-%% Macro helpers
-%%--------------------------------------------------------------------
-
-
-
--define(check_mandatory_field(Name, Record, Field),
-        erlang:apply(fun(#Name{Field = V}) when V /= undefined -> {ok, Field, V};
-                        (_) -> {error, {Name, Field}, []} end,
-                     [Record])).
-
-
-
--define(get_failed_mandatory(List),
-        lists:filter(fun({ok, _, _}) -> false;
-                        ({error, _, _}) -> true end, List)).
-
-
-
--define(check_subrecord(Name, Record, Field, Callback),
-        erlang:apply(fun(#Name{Field = V}) -> case Callback(V) of
-                                                  [] -> [];
-                                                  Errors -> [{error, {Name, Field}, Errors}]
-                                              end;
-                        (_) -> []
-                     end,
-                     [Record])).
-
-
-
-%%--------------------------------------------------------------------
 %% @doc
-%% Checks, if the configuration is valid
+%% Check, if the configuration is valid
 %% @end
 %%--------------------------------------------------------------------
 
@@ -79,6 +49,7 @@
 -spec(validate_configuration([config_entry()]) ->
              {ParsedConfig :: [#smpp_entity{}], Errors :: [] | [{error, Field :: atom(), Error :: any() }]} |
              {error, Reason :: term()}).
+
 
 validate_configuration([]) ->
     {error, empty_configuration};
@@ -90,15 +61,21 @@ validate_configuration(Config) when is_list(Config) ->
 
 
 
+%%%===================================================================
+%%% Internal functions
+%%%===================================================================
+
+
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Transforms the etoml representation of config to the internal record format
+%% Transform the list representation of config to the internal record format
 %% @end
 %%--------------------------------------------------------------------
 
 -spec(parse_config(Entries :: list(), Accumulator :: [#smpp_entity{}]) ->
              [#smpp_entity{}]).
+
 
 parse_config([], Config) ->
     lists:reverse(Config);
@@ -106,6 +83,21 @@ parse_config([], Config) ->
 parse_config([Head | Tail], Config) ->
     parse_config(Tail, [parse_entity(Head, #smpp_entity{}) | Config]).
 
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Fill smpp_entity record's fields from the given proplist
+%% @end
+%%--------------------------------------------------------------------
+
+-spec parse_entity(PropertyList, Accumulator) -> Entity when
+      PropertyList :: [{Key, Value}],
+      Key :: atom(),
+      Value :: any(),
+      Accumulator :: #smpp_entity{},
+      Entity :: #smpp_entity{}.
 
 
 parse_entity([], #smpp_entity{} = Entity) ->
@@ -141,6 +133,20 @@ parse_entity([_ | Tail], #smpp_entity{} = Entity) ->
 
 
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Fill outbind_field record's fields from the given proplist
+%% @end
+%%--------------------------------------------------------------------
+
+-spec parse_outbind(PropertyList, Accumulator) -> Outbind when
+      PropertyList :: [{Key, Value}],
+      Key :: atom(),
+      Value :: any(),
+      Accumulator :: #outbind_field{},
+      Outbind :: #outbind_field{}.
+
 
 parse_outbind(Data) ->
     parse_outbind(Data, #outbind_field{}).
@@ -161,10 +167,12 @@ parse_outbind([{port, Port} | Tail], #outbind_field{} = Outbind) ->
   parse_outbind(Tail, Outbind#outbind_field{port = Port}).
 
 
+
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Checks, if all the mandatory fields in #config{} record is set
+%% Check, if all the mandatory fields in #config{} record are set,
+%% and check fields for validity.
 %% @end
 %%--------------------------------------------------------------------
 
@@ -199,13 +207,17 @@ check_config([ConfigEntry | Config], Accumulator) ->
 
 
 get_failed_fields(#smpp_entity{} = Entity) ->
-    CheckList = [fun check_id/1,
+    CheckList = [%% mandatory
+                 fun check_id/1,
                  fun check_type/1,
                  fun check_system_id/1,
                  fun check_password/1,
                  fun check_host/1,
                  fun check_port/1,
-                 fun check_allowed_modes/1],
+                 fun check_allowed_modes/1,
+                 %%optional
+                 fun check_outbind/1
+                ],
     lists:flatten([Checker(Entity) || Checker <- CheckList]).
 
 
@@ -374,3 +386,122 @@ check_allowed_modes(#smpp_entity{allowed_modes = []}) ->
 
 check_allowed_modes(_) ->
     {error, "'allowed_modes' is not set"}.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Check optional field 'outbind'
+%% @end
+%%--------------------------------------------------------------------
+
+-spec check_outbind(SmppEntity) -> Error when
+      SmppEntity :: #smpp_entity{},
+      Error :: [] | {error, Message} | {error, Message, Value},
+      Message :: string(),
+      Value :: any().
+
+
+check_outbind(#smpp_entity{outbind = Outbind}) when outbind /= undefined ->
+        CheckList = [fun check_outbind_system_id/1,
+                     fun check_outbind_password/1,
+                     fun check_outbind_host/1,
+                     fun check_outbind_port/1],
+    lists:flatten([Checker(Outbind) || Checker <- CheckList]);
+
+check_outbind(_) ->
+    [].
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Check field 'system_id' in outbind
+%% @end
+%%--------------------------------------------------------------------
+
+-spec check_outbind_system_id(Outbind) -> Error when
+      Outbind :: #outbind_field{},
+      Error :: [] | {error, Message} | {error, Message, Value},
+      Message :: string(),
+      Value :: any().
+
+
+check_outbind_system_id(#outbind_field{system_id = SystemId}) when is_list(SystemId) -> 
+    [];
+check_outbind_system_id(#outbind_field{system_id = SystemId}) when SystemId /= undefined ->
+    {error, "'system_id' in outbind has wrong type", SystemId};
+check_outbind_system_id(_) ->
+    {error, "'system_id' in outbind is no set"}.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Check field 'password' in outbind
+%% @end
+%%--------------------------------------------------------------------
+
+-spec check_outbind_password(Outbind) -> Error when
+      Outbind :: #outbind_field{},
+      Error :: [] | {error, Message} | {error, Message, Value},
+      Message :: string(),
+      Value :: any().
+
+
+check_outbind_password(#outbind_field{password = Password}) when is_list(Password) -> 
+    [];
+check_outbind_password(#outbind_field{password = Password}) when Password /= undefined ->
+    {error, "'password' in outbind has wrong type", Password};
+check_outbind_password(_) ->
+    {error, "'password' in outbind is no set"}.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Check field 'host' in outbind
+%% @end
+%%--------------------------------------------------------------------
+
+-spec check_outbind_host(Outbind) -> Error when
+      Outbind :: #outbind_field{},
+      Error :: [] | {error, Message} | {error, Message, Value},
+      Message :: string(),
+      Value :: any().
+
+
+check_outbind_host(#outbind_field{host = Host}) when is_list(Host); Host == all -> 
+    [];
+check_outbind_host(#outbind_field{host = Host}) when Host /= undefined ->
+    {error, "'host' in outbind has wrong type", Host};
+check_outbind_host(_) ->
+    {error, "'host' in outbind is no set"}.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Check field 'port' in outbind
+%% @end
+%%--------------------------------------------------------------------
+
+-spec check_outbind_port(Outbind) -> Error when
+      Outbind :: #outbind_field{},
+      Error :: [] | {error, Message} | {error, Message, Value},
+      Message :: string(),
+      Value :: any().
+
+
+check_outbind_port(#outbind_field{port = Port}) when is_number(Port), Port >= 0, Port =< 65535 ->
+    [];
+check_outbind_port(#outbind_field{port = Port}) when Port /= undefined ->
+    {error, "'port' in outbind has wrong type or value", Port};
+check_outbind_port(_) ->
+    {error, "port in outbind is not set"}.
+
