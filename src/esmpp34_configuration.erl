@@ -85,7 +85,7 @@ validate_configuration([]) ->
 
 validate_configuration(Config) when is_list(Config) ->
     ParsedConfig = parse_config(Config, []),
-    Errors = check_config(ParsedConfig),
+    Errors = check_config(ParsedConfig, []),
     {ParsedConfig, Errors}.
 
 
@@ -130,7 +130,7 @@ parse_entity([{port, Port} | Tail], #smpp_entity{} = Entity) ->
     parse_entity(Tail, Entity#smpp_entity{port = Port});
 
 parse_entity([{allowed_modes, AllowedModes} | Tail], #smpp_entity{} = Entity) ->
-    parse_entity(Tail, Entity#smpp_entity{allowed_modes = [X || X <- AllowedModes, X == tx orelse X == rx orelse X == trx]});
+    parse_entity(Tail, Entity#smpp_entity{allowed_modes = [X || X <- AllowedModes]});
 
 parse_entity([{outbind, Outbind} | Tail], #smpp_entity{} = Entity) ->
     parse_entity(Tail, Entity#smpp_entity{outbind = parse_outbind(Outbind)});
@@ -168,53 +168,209 @@ parse_outbind([{port, Port} | Tail], #outbind_field{} = Outbind) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec(check_config(Config :: [#smpp_entity{}]) ->
-             Errors :: []
-                     | [{error, Field :: atom(), Error :: any() }]).
+-spec check_config(Config, Accumulator) -> Errors when
+      Config :: [#smpp_entity{}],
+      Accumulator :: ErrorList,
+      Errors :: ErrorList,
+      ErrorList :: [] | [{error, Field, Error}],
+      Field :: atom(),
+      Error :: any().
+      
 
-check_config([_|_] = Config) ->
-    [].
-%%     E1 = ?get_failed_mandatory([?check_mandatory_field(config, Config, connections)]),
-%%     E2 = ?get_failed_mandatory([?check_mandatory_field(config, Config, directions)]),
-%%     E3 = ?check_subrecord(config, Config, directions, fun check_section_list/1),
-%%     E4 = ?check_subrecord(config, Config, connections, fun check_section_list/1),
-%%     E1 ++ E2 ++ E3 ++ E4.
+check_config([], Accumulator) ->
+    lists:flatten(lists:reverse(Accumulator));
+    
+check_config([ConfigEntry | Config], Accumulator) ->
+    Errors = get_failed_fields(ConfigEntry),
+    check_config(Config, [Errors | Accumulator]).
 
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Checks, if all the mandatory fields in the list of sections record is set
-%% @end
-%%--------------------------------------------------------------------
-
-%% check_section_list(List) when is_list(List) ->
-%%     check_section_list(List, []).
-%%
-%% check_section_list([], Acc) ->
-%%     Acc;
-%%
-%% check_section_list([Section | Tail], Acc) ->
-%%     check_section_list(Tail, Acc ++ check_section(Section)).
 
 
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Checks, if all the mandatory fields in #section{} record is set
+%% Construct a checker list and find any errors in fields
 %% @end
 %%--------------------------------------------------------------------
 
-%% -spec(check_section(Section :: #smpp_entity{} | #smpp_entity{}) ->
-%%              Errors :: []
-%%                      | [{error, Field :: atom(), Error :: any() }]).
-%%
-%% check_section(#smpp_entity{} = Record) ->
-%%     ?get_failed_mandatory([?check_mandatory_field(direction, Record, id),
-%%                            ?check_mandatory_field(direction, Record, mode),
-%%                            ?check_mandatory_field(direction, Record, connections)]);
-%%
-%% check_section(#smpp_entity{} = Record) ->
-%%     ?get_failed_mandatory([?check_mandatory_field(connection, Record, id),
-%%                            ?check_mandatory_field(connection, Record, type),
-%%                            ?check_mandatory_field(connection, Record, host)]).
+-spec get_failed_fields(SmppEntity) -> Errors when
+      SmppEntity :: #smpp_entity{},
+      Errors :: [] | [{error, string()}].
+
+
+get_failed_fields(#smpp_entity{} = Entity) ->
+    CheckList = [fun check_id/1,
+                 fun check_type/1,
+                 fun check_system_id/1,
+                 fun check_password/1,
+                 fun check_host/1,
+                 fun check_port/1,
+                 fun check_allowed_modes/1],
+    lists:flatten([Checker(Entity) || Checker <- CheckList]).
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Check mandatory field 'id'
+%% @end
+%%--------------------------------------------------------------------
+
+-spec check_id(SmppEntity) -> Error when
+      SmppEntity :: #smpp_entity{},
+      Error :: [] | {error, Message} | {error, Message, Value},
+      Message :: string(),
+      Value :: any().
+
+
+check_id(#smpp_entity{id = Id}) when is_number(Id) -> %% TODO: make Id as any atom
+    [];
+check_id(#smpp_entity{id = Id}) when Id /= undefined ->
+    {error, "'id' has wrong type", Id};
+check_id(_) ->
+    {error, "id is not set"}.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Check mandatory field 'type'
+%% @end
+%%--------------------------------------------------------------------
+
+-spec check_type(SmppEntity) -> Error when
+      SmppEntity :: #smpp_entity{},
+      Error :: [] | {error, Message} | {error, Message, Value},
+      Message :: string(),
+      Value :: any().
+
+
+check_type(#smpp_entity{type = Type}) when Type == smsc; Type == esme -> 
+    [];
+check_type(#smpp_entity{type = Type}) when Type /= undefined ->
+    {error, "'type' has wrong value", Type};
+check_type(_) ->
+    {error, "'type' is no set"}.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Check mandatory field 'system_id'
+%% @end
+%%--------------------------------------------------------------------
+
+-spec check_system_id(SmppEntity) -> Error when
+      SmppEntity :: #smpp_entity{},
+      Error :: [] | {error, Message} | {error, Message, Value},
+      Message :: string(),
+      Value :: any().
+
+
+check_system_id(#smpp_entity{system_id = SystemId}) when is_list(SystemId) -> 
+    [];
+check_system_id(#smpp_entity{system_id = SystemId}) when SystemId /= undefined ->
+    {error, "'system_id' has wrong type", SystemId};
+check_system_id(_) ->
+    {error, "'system_id' is no set"}.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Check mandatory field 'password'
+%% @end
+%%--------------------------------------------------------------------
+
+-spec check_password(SmppEntity) -> Error when
+      SmppEntity :: #smpp_entity{},
+      Error :: [] | {error, Message} | {error, Message, Value},
+      Message :: string(),
+      Value :: any().
+
+
+check_password(#smpp_entity{password = Password}) when is_list(Password) -> 
+    [];
+check_password(#smpp_entity{password = Password}) when Password /= undefined ->
+    {error, "'password' has wrong type", Password};
+check_password(_) ->
+    {error, "'password' is no set"}.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Check mandatory field 'host'
+%% @end
+%%--------------------------------------------------------------------
+
+-spec check_host(SmppEntity) -> Error when
+      SmppEntity :: #smpp_entity{},
+      Error :: [] | {error, Message} | {error, Message, Value},
+      Message :: string(),
+      Value :: any().
+
+
+check_host(#smpp_entity{host = Host}) when is_list(Host); Host == all -> 
+    [];
+check_host(#smpp_entity{host = Host}) when Host /= undefined ->
+    {error, "'host' has wrong type", Host};
+check_host(_) ->
+    {error, "'host' is no set"}.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Check mandatory field 'port'
+%% @end
+%%--------------------------------------------------------------------
+
+-spec check_port(SmppEntity) -> Error when
+      SmppEntity :: #smpp_entity{},
+      Error :: [] | {error, Message} | {error, Message, Value},
+      Message :: string(),
+      Value :: any().
+
+
+check_port(#smpp_entity{port = Port}) when is_number(Port), Port >= 0, Port =< 65535 ->
+    [];
+check_port(#smpp_entity{port = Port}) when Port /= undefined ->
+    {error, "'port' has wrong type or value", Port};
+check_port(_) ->
+    {error, "port is not set"}.
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Check mandatory field 'allowed_modes'
+%% @end
+%%--------------------------------------------------------------------
+
+-spec check_allowed_modes(SmppEntity) -> Error when
+      SmppEntity :: #smpp_entity{},
+      Error :: [] | {error, Message} | {error, Message, Value},
+      Message :: string(),
+      Value :: any().
+
+check_allowed_modes(#smpp_entity{allowed_modes = [_|_]  = AllowedModes}) ->
+    case lists:filter(fun(M) when M == tx; M == rx; M == trx -> false;
+                         (_) -> true
+                      end, AllowedModes) of
+        [] -> [];
+        UnknownValues -> {error, "'allowed_modes' has unknown values", UnknownValues}
+    end;
+    
+check_allowed_modes(#smpp_entity{allowed_modes = []}) ->
+    {error, "'allowed_modes' field is empty list"};
+
+check_allowed_modes(_) ->
+    {error, "'allowed_modes' is not set"}.
