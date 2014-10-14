@@ -186,11 +186,6 @@ send_data(DirPid, Data, Sequence, Status) ->
 %% @private
 %% @doc
 %% Initializes the server
-%%
-%% @spec init(Args) -> {ok, State} |
-%%                     {ok, State, Timeout} |
-%%                     ignore |
-%%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
 
@@ -356,8 +351,6 @@ terminate(_Reason, _State) ->
 %% @private
 %% @doc
 %% Convert process state when code is changed
-%%
-%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
 %% @end
 %%--------------------------------------------------------------------
 

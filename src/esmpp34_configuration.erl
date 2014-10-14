@@ -140,6 +140,25 @@ parse_entity([_ | Tail], #smpp_entity{} = Entity) ->
 %% @end
 %%--------------------------------------------------------------------
 
+-spec parse_outbind(PropertyList) -> Outbind when
+      PropertyList :: [{Key, Value}],
+      Key :: atom(),
+      Value :: any(),
+      Outbind :: #outbind_field{}.
+
+
+parse_outbind(Data) ->
+    parse_outbind(Data, #outbind_field{}).
+
+
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Fill outbind_field record's fields from the given proplist
+%% @end
+%%--------------------------------------------------------------------
+
 -spec parse_outbind(PropertyList, Accumulator) -> Outbind when
       PropertyList :: [{Key, Value}],
       Key :: atom(),
@@ -147,9 +166,6 @@ parse_entity([_ | Tail], #smpp_entity{} = Entity) ->
       Accumulator :: #outbind_field{},
       Outbind :: #outbind_field{}.
 
-
-parse_outbind(Data) ->
-    parse_outbind(Data, #outbind_field{}).
 
 parse_outbind([], #outbind_field{} = Outbind) ->
   Outbind;
