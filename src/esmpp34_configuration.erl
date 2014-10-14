@@ -403,11 +403,11 @@ check_allowed_modes(_) ->
       Value :: any().
 
 
-check_outbind(#smpp_entity{outbind = Outbind}) when outbind /= undefined ->
-        CheckList = [fun check_outbind_system_id/1,
-                     fun check_outbind_password/1,
-                     fun check_outbind_host/1,
-                     fun check_outbind_port/1],
+check_outbind(#smpp_entity{outbind = Outbind}) when Outbind /= undefined ->
+    CheckList = [fun check_outbind_system_id/1,
+                 fun check_outbind_password/1,
+                 fun check_outbind_host/1,
+                 fun check_outbind_port/1],
     lists:flatten([Checker(Outbind) || Checker <- CheckList]);
 
 check_outbind(_) ->
@@ -503,5 +503,5 @@ check_outbind_port(#outbind_field{port = Port}) when is_number(Port), Port >= 0,
 check_outbind_port(#outbind_field{port = Port}) when Port /= undefined ->
     {error, "'port' in outbind has wrong type or value", Port};
 check_outbind_port(_) ->
-    {error, "port in outbind is not set"}.
+    {error, "'port' in outbind is not set"}.
 

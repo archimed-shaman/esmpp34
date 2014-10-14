@@ -202,7 +202,7 @@ receive_data(Mode, #state{response_timers = Timers,
         true when IsAllowed ->
             %% it is response and it is allowed in current mode
             {Pid, NewTimers} = cancel_timeout(Seq, Timers),
-            Pid ! {smpp_response, Body, Seq},
+            Pid ! {smpp_response, Pdu, Seq},
             %% TODO: handle data in directionsend data to direction if is set in config
             State#state{response_timers = NewTimers};
         true ->

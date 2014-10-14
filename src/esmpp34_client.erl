@@ -104,8 +104,9 @@ init(Args) ->
     Host = proplists:get_value(host, Args),
     Port = proplists:get_value(port, Args),
     Mode = proplists:get_value(mode, Args),
-    io:format("Connecting to ~p:~p~n", [Host,Port]),
-    starter(Host, Port, #state{host = Host, port = Port, connection = Connection, mode = Mode}).
+    Id = Connection#smpp_entity.id,
+    erlang:send_after(1, self(), connect),
+    {ok, open, #state{id = Id, connection = Connection, mode = Mode, host = Host, port = Port}}.
 
 
 
@@ -127,21 +128,10 @@ init(Args) ->
       Reason :: term().
 
 
-open(bind, #state{ socket = Socket,
-                   mode = Mode,
-                   connection = #smpp_entity{system_id = SystemId, password = Password},
-                   seq = Seq } = State) when Mode == trx ->
-    Req = #bind_transceiver{system_id = SystemId,
-                            password = Password,
-                            system_type = [], %% FIXME: maybe, its necessary to set correct system type
-                            interface_version = 16#34
-                            %% TODO: fill this fields
-                            %% addr_ton           = 0,
-                            %% addr_npi           = 0,
-                            %% address_range      = []
-                           },
-    gen_tcp:send(Socket, esmpp34raw:pack_single(Req, ?ESME_ROK, Seq)),
-    {next_state, open_bind_resp, State#state{seq = Seq + 1}, 10000}; %% TODO: timeout from config
+open(connect, #state{ mode = Mode,
+                      host = Host,
+                      port = Port} = State) when Mode == trx ->
+    starter(Host, Port, State);
 
 open(bind, #state{ socket = Socket,
                    mode = Mode,
@@ -552,8 +542,8 @@ handle_sync_event(_Event, _From, StateName, State) ->
 
 
 %% 'bind' is sent in starter
-handle_info(bind, StateName, #state{} = StateData) ->
-    ?MODULE:StateName(bind, StateData);
+handle_info(connect, StateName, #state{} = StateData) ->
+    ?MODULE:StateName(connect, StateData);
 
 handle_info({tcp, Socket,  Bin}, StateName, #state{data = OldData} = StateData) ->
     Data = lists:foldl(fun(Data, Accumulator) ->
@@ -574,10 +564,12 @@ handle_info({timeout, _Seq} = Msg, StateName, #state{} = State) ->
 handle_info({tcp_closed, _Socket}, _StateName, #state{response_timers = Timers} = State) ->
     io:format("Socket closed, cancelling timers...~n"),
     lists:foreach(fun(Timer) -> erlang:cancel_timer(Timer) end, dict:to_list(Timers)),
-    {stop, normal, State#state{response_timers = []}}; %% FIXME: reconnect
+    %% TODO: send request to restart connection
+    timer:sleep(1000), %% TODO: from config
+    {stop, {error, tcp_closed}, State#state{response_timers = []}};
 
-handle_info({'DOWN', _MonitorRef, process, DownPid, _}, _StateName, #state{dir_pid = {Pid, _Ref}}) when DownPid == Pid ->
-    {stop, normal};
+handle_info({'DOWN', _MonitorRef, process, DownPid, _}, _StateName, #state{dir_pid = {Pid, _Ref}} = State) when DownPid == Pid ->
+    {stop, normal, State};
 
 handle_info(enquire_link, StateName, #state{} = State) ->
     ?MODULE:StateName(enquire_link, State).
@@ -641,22 +633,34 @@ code_change(_OldVsn, StateName, State, _Extra) ->
       Reason :: term().
 
 
-starter(Host, Port, #state{} = State) ->
+starter(Host, Port, #state{connection = #smpp_entity{system_id = SystemId, password = Password},
+                           seq = Seq} = State) ->
     case esmpp34_utils:resolver(Host) of
         {ok, IpAddress} ->
-            Options = [binary, {ip, IpAddress}, {packet, raw}, {active, true}, {reuseaddr, true}],
+            Options = [binary, {packet, raw}, {active, once}, {reuseaddr, true}],
+            io:format("Connecting to ~p(~p):~p~n", [Host, IpAddress, Port]),
             case gen_tcp:connect(IpAddress, Port, Options, 30000) of %% TODO: timeout from config?
                 {ok, Socket} ->
                     io:format("Connected to ~p:~p~n", [Host,Port]),
-                    erlang:send_after(1, self(), bind),
-                    {ok, open, State#state{socket = Socket}};
+                    Req = #bind_transceiver{system_id = SystemId,
+                                            password = Password,
+                                            system_type = [], %% FIXME: maybe, its necessary to set correct system type
+                                            interface_version = 16#34
+                                            %% TODO: fill this fields
+                                            %% addr_ton           = 0,
+                                            %% addr_npi           = 0,
+                                            %% address_range      = []
+                                           },
+                    gen_tcp:send(Socket, esmpp34raw:pack_single(Req, ?ESME_ROK, Seq)),
+                    {next_state, open_bind_resp, State#state{socket = Socket, seq = Seq + 1}, 10000}; %% TODO: timeout from config
                 {error, Reason} ->
+                    timer:sleep(1000), %% TODO: from config
                     io:format("TCP connect error start: ~p~n", [Reason]),
-                    {stop, normal}
+                    {stop, {error, Reason}, State}
             end;
         Error ->
             io:format("Unable parse IP ~p : [~p], stopping client... ~n", [Host, Error]),
-            {stop, normal}
+            {stop, normal, State}
     end.
 
 
