@@ -107,7 +107,7 @@ init(Args) ->
     Connection = proplists:get_value(connection, Args),
     Socket = proplists:get_value(socket, Args),
     io:format("Acceptor started with parameters: ~p~n", [Args]),
-    inet:setopts(Socket, [{active, once}]),
+    inet:setopts(Socket, [{active, true}]),
     {ok, open, #state{id = Id, connection = Connection, socket = Socket}, 1000}. %% FIXME: make 1000 as timeout macros or record field
 
 
@@ -464,15 +464,10 @@ handle_sync_event(_Event, _From, StateName, State) ->
              {stop, Reason :: normal | term(), NewStateData :: term()}).
 
 
-handle_info({tcp, Socket,  Bin}, StateName, #state{data = OldData} = StateData) ->
-    %% io:format("data: ~p~n", [Bin]),
-    Data = lists:foldl(fun(Data, Accumulator) ->
-                               <<Accumulator/binary, Data/binary>>
-                       end, <<OldData/binary, Bin/binary>>, esmpp34_utils:do_recv(Socket, [], 10)),
+handle_info({tcp, _Socket,  Bin}, StateName, #state{data = OldData} = StateData) ->
+    Data = <<OldData/binary, Bin/binary>>,
     {KnownPDU, UnknownPDU, Rest} = esmpp34raw:unpack_sequence(Data),
-    Result = ?MODULE:StateName({data, KnownPDU, UnknownPDU}, StateData#state{data = Rest}),
-    inet:setopts(Socket, [{active, once}]),
-    Result;
+    ?MODULE:StateName({data, KnownPDU, UnknownPDU}, StateData#state{data = Rest});
 
 handle_info({timeout, Seq, enquire_link}, _, #state{} = State) ->
     io:format("Timeout for enquire_link ~p~n", [Seq]),

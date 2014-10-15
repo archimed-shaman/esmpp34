@@ -545,13 +545,10 @@ handle_sync_event(_Event, _From, StateName, State) ->
 handle_info(connect, StateName, #state{} = StateData) ->
     ?MODULE:StateName(connect, StateData);
 
-handle_info({tcp, Socket,  Bin}, StateName, #state{data = OldData} = StateData) ->
-    Data = lists:foldl(fun(Data, Accumulator) ->
-                               <<Accumulator/binary, Data/binary>>
-                       end, <<OldData/binary, Bin/binary>>, esmpp34_utils:do_recv(Socket, [], 10)),
+handle_info({tcp, _Socket,  Bin}, StateName, #state{data = OldData} = StateData) ->
+    Data = <<OldData/binary, Bin/binary>>,
     {KnownPDU, UnknownPDU, Rest} = esmpp34raw:unpack_sequence(Data),
     Result = ?MODULE:StateName({data, KnownPDU, UnknownPDU}, StateData#state{data = Rest}),
-    inet:setopts(Socket, [{active, once}]),
     Result;
 
 handle_info({timeout, Seq, enquire_link}, _, #state{} = State) ->
@@ -637,7 +634,7 @@ starter(Host, Port, #state{connection = #smpp_entity{system_id = SystemId, passw
                            seq = Seq} = State) ->
     case esmpp34_utils:resolver(Host) of
         {ok, IpAddress} ->
-            Options = [binary, {packet, raw}, {active, once}, {reuseaddr, true}],
+            Options = [binary, {packet, raw}, {active, true}, {reuseaddr, true}],
             io:format("Connecting to ~p(~p):~p~n", [Host, IpAddress, Port]),
             case gen_tcp:connect(IpAddress, Port, Options, 30000) of %% TODO: timeout from config?
                 {ok, Socket} ->
