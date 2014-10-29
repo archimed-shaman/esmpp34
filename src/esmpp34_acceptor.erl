@@ -560,10 +560,10 @@ proceed_open(#state{connection = #smpp_entity{id = ConnectionId} = _Connection, 
     %%     {next_state, open, State};
     case Result of
         {ok, DirPid} ->
+            Ref = erlang:monitor(process, DirPid),
             Resp = #bind_transceiver_resp{system_id = "TEST", sc_interface_version = 16#34},
             Code = ?ESME_ROK,
             gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
-            Ref = erlang:monitor(process, DirPid),
 	    NewState = esmpp34_utils:start_el_timer(State),
             {next_state, bound_trx, NewState#state{dir_pid = {DirPid, Ref}}};
         {error, Reason} ->
@@ -581,10 +581,10 @@ proceed_open(#state{connection = #smpp_entity{id = ConnectionId} = _Connection, 
     %%     {next_state, open, State};
     case Result of
         {ok, DirPid} ->
+            Ref = erlang:monitor(process, DirPid),
             Resp = #bind_transmitter_resp{system_id = "TEST", sc_interface_version = 16#34},
             Code = ?ESME_ROK,
             gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
-            Ref = erlang:monitor(process, DirPid),
 	    NewState = esmpp34_utils:start_el_timer(State),
             {next_state, bound_tx, NewState#state{dir_pid = {DirPid, Ref}}};
         {error, Reason} ->
@@ -602,10 +602,10 @@ proceed_open(#state{connection = #smpp_entity{id = ConnectionId} = _Connection, 
     %%     {next_state, open, State};
     case Result of
         {ok, DirPid} ->
+            Ref = erlang:monitor(process, DirPid),
             Resp = #bind_receiver_resp{system_id = "TEST", sc_interface_version = 16#34},
             Code = ?ESME_ROK,
             gen_tcp:send(Socket, esmpp34raw:pack_single(Resp, Code, Seq)),
-            Ref = erlang:monitor(process, DirPid),
 	    NewState = esmpp34_utils:start_el_timer(State),
             {next_state, bound_rx, NewState#state{dir_pid = {DirPid, Ref}}};
         {error, Reason} ->

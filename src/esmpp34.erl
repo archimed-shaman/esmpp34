@@ -42,7 +42,7 @@
          send_data/2,
          send_data/3,
          send_data/4,
-         version/0
+         get_status/0
         ]).
 
 
@@ -51,23 +51,25 @@
 start(ConfigGetter) when is_function(ConfigGetter) ->
     %% FIXME: match ok results
     application:start(esmpp34),
-    esmpp34_sup:start_manager(ConfigGetter),
-    esmpp34_manager:run_config().
+    esmpp34_sup:start_manager(ConfigGetter).
+
+
 
 
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Return version of the library
+%% Return status of config execution
 %% @end
 %%--------------------------------------------------------------------
 
--spec version() -> Version when
-      Version :: string().
+-spec get_status() -> Status when
+      Status :: ok | {error, Error},
+      Error :: term().
 
 
-version() ->
-    ?VERSION.
+get_status() ->
+    esmpp34_manager:get_status().
 
 
 

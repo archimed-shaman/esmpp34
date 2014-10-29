@@ -36,6 +36,8 @@
 
 -include("esmpp34.hrl").
 
+
+
 %% API
 -export([ start_link/3 ]).
 
@@ -47,11 +49,17 @@
           terminate/2,
           code_change/3 ]).
 
+
+
 -define(SERVER, ?MODULE).
 -define(ACCEPT_INTERVAL, 1000).
 -define(ACCEPT_TIMEOUT, 100).
 
+
+
 -record(state, {host, port, listener, connection, connection_id = 0, timer}).
+
+
 
 %%%===================================================================
 %%% API
@@ -89,16 +97,18 @@ init(Args) ->
 
 
 
-
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
 %% Handling call messages
 %% @end
 %%--------------------------------------------------------------------
+
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
+
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -106,8 +116,11 @@ handle_call(_Request, _From, State) ->
 %% Handling cast messages
 %% @end
 %%--------------------------------------------------------------------
+
 handle_cast(_Msg, State) ->
     {noreply, State}.
+
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -128,6 +141,8 @@ handle_info(accept_if_any, #state{timer = OldTimer,
 handle_info(_Info, State) ->
     {noreply, State}.
 
+
+
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -137,9 +152,12 @@ handle_info(_Info, State) ->
 %% with Reason. The return value is ignored.
 %% @end
 %%--------------------------------------------------------------------
+
 terminate(_Reason, #state{listener = Socket}) ->
     gen_tcp:close(Socket),
     ok.
+
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -147,8 +165,11 @@ terminate(_Reason, #state{listener = Socket}) ->
 %% Convert process state when code is changed
 %% @end
 %%--------------------------------------------------------------------
+
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+
 
 %%%===================================================================
 %%% Internal functions

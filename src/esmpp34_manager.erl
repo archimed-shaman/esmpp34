@@ -36,7 +36,7 @@
 %% API
 -export([
          start_link/1,
-         run_config/0,
+         get_status/0,
          register_direction/1,
          register_connection/2,
          register_connection/4,
@@ -63,7 +63,8 @@
 -record(state, { callback,
                  config         = [],
                  pid_dict       = dict:new(),
-                 direction_dict = dict:new() }).
+                 direction_dict = dict:new(),
+                 status = initial }).
 
 
 
@@ -103,12 +104,12 @@ start_link(Callback) when is_function(Callback) ->
 %% @end
 %%--------------------------------------------------------------------
 
--spec run_config() -> Resp when
+-spec get_status() -> Resp when
       Resp :: ok | {error, Error :: term()}.
 
 
-run_config() ->
-    gen_server:call(?SERVER, run_config).
+get_status() ->
+    gen_server:call(?SERVER, get_status).
 
 
 
@@ -198,6 +199,7 @@ get_direction_pid(DirectionId) ->
 init(Args) ->
     io:format("Starting manager... ~n"),
     CallBack = proplists:get_value(callback, Args),
+    erlang:send_after(1, self(), run_config),
     {ok, #state{callback = CallBack}}.
 
 
@@ -218,26 +220,8 @@ init(Args) ->
              {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
              {stop, Reason :: term(), NewState :: #state{}}).
 
-
-handle_call(run_config, _From, #state{callback = Callback, config = OldConfig} = State) ->
-    %%     {reply, {error, error}, State};
-    io:format("Checking config... ~n"),
-    case get_config(Callback()) of
-        {ok, NewConfig} ->
-            io:format("Config check ok ~n"),
-            case run_config(OldConfig, NewConfig, State) of
-                #state{} = NewState ->
-                    io:format("Done ~n"),
-                    {reply, ok, NewState#state{config = NewConfig}};
-                {error, Reason} ->
-                    io:format("Error: ~p ~n", [Reason]),
-                    {reply, {error, Reason}, State};
-                Any ->
-                    io:format("Hujnya: ~p ~n", [Any]),
-                    {reply, {error, Any}, State}
-            end;
-        {error, Reason} -> {reply, {error, Reason}, State}
-    end;
+handle_call(get_status, _From, #state{status = Status} = State) ->
+    {reply, Status, State};
 
 handle_call({register_direction, DirId}, {From, _}, #state{direction_dict = DirDict, pid_dict = PidDict} = State) ->
     %%     {reply, {error, no_direction}, State};
@@ -345,6 +329,26 @@ handle_info({'DOWN', MonitorRef, process, DownPid, _}, #state{pid_dict = PidDict
             {noreply, State#state{pid_dict = NewPidDict, direction_dict = NewDirDict}};
         error ->
             {noreply, State}
+    end;
+
+handle_info(run_config, #state{callback = Callback, config = OldConfig} = State) ->
+    %%     {reply, {error, error}, State};
+    io:format("Checking config... ~n"),
+    case get_config(Callback()) of
+        {ok, NewConfig} ->
+            io:format("Config check ok ~n"),
+            case run_config(OldConfig, NewConfig, State) of
+                #state{} = NewState ->
+                    io:format("Done ~n"),
+                    {noreply, NewState#state{status = ok, config = NewConfig}};
+                {error, Reason} ->
+                    io:format("Error: ~p ~n", [Reason]),
+                    {noreply, State#state{status = {error, Reason}}};
+                Any ->
+                    io:format("Hujnya: ~p ~n", [Any]),
+                    {noreply, State#state{status = {error, Any}}}
+            end;
+        {error, Reason} -> {noreply, State#state{status = {error, Reason}}}
     end;
 
 handle_info(_Info, State) ->

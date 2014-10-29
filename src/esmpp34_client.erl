@@ -257,7 +257,7 @@ bound_trx({data, Pdus, _}, #state{} = State) ->
 
 bound_trx({timeout, Seq}, #state{} = State) ->
     io:format("Timeout for sequence ~p~n", [Seq]),
-    NewState = esmpp34_utils:receive_timeout(Seq, State),
+    NewState = esmpp34_utils:receive_timeout(Seq, State), %% FIXME: there is a bug here (function clause)
     {next_state, bound_trx, NewState}.
 
 

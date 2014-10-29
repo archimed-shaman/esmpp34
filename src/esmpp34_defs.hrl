@@ -46,6 +46,4 @@
 		 el_timer,
                  el_timer_resp }).
 
--define(VERSION, "1.0.0 alpha").
-
 -endif.
