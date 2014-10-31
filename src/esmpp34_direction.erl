@@ -323,8 +323,8 @@ handle_info({'DOWN', MonitorRef, process, DownPid, _},
     {noreply, State#state{rx = undefined, rx_ref = undefined}};
 
 %% TODO: remove this, let it fall
-handle_info(Info, State) ->
-    io:format("~p: ~p~n", [?MODULE, Info]),
+handle_info(_Info, State) ->
+    %io:format("~p: ~p~n", [?MODULE, Info]),
     {noreply, State}.
 
 

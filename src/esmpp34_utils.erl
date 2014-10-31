@@ -232,14 +232,14 @@ receive_data(Mode, #state{response_timers = Timers,
       NewState :: #state{}.
                
 
-receive_timeout(Seq, #state{dir_pid = {Pid, _}, response_timers = Timers} = State) ->
-    {Pid, NewTimerDict} = case cancel_timeout(Seq, Timers) of
-                              {Pid, NewTimers} ->
-                                  Pid ! {smpp_error, timeout, Seq}, %% TODO: check config and send to direction, if necessary
-                                  NewTimers;
-                              {undefined, NewTimers} ->
-                                  NewTimers
-                          end,
+receive_timeout(Seq, #state{dir_pid = {DirPid, _}, response_timers = Timers} = State) ->
+    NewTimerDict = case cancel_timeout(Seq, Timers) of
+                       {undefined, NewTimers} ->
+                           NewTimers;
+                       {_StoredPid, NewTimers} ->
+                           DirPid ! {smpp_error, timeout, Seq}, %% TODO: check config and send to direction, if necessary
+                           NewTimers
+                   end,
     State#state{response_timers = NewTimerDict}.
 
 
