@@ -102,7 +102,7 @@ init([]) ->
 %%%===================================================================
 
 
-start_acceptor(Id, #smpp_entity{} = Connection, Socket) ->
-    DirSpec = {{esmpp34_acceptor, Id},
+start_acceptor(Id, #smpp_entity{host = Host, port = Port} = Connection, Socket) ->
+    DirSpec = {{esmpp34_acceptor, Host, Port, Id},
                {esmpp34_acceptor, start_link, [Id, Connection, Socket]}, temporary, 3000, worker, [esmpp34_acceptor]},
     supervisor:start_child(?MODULE, DirSpec).
