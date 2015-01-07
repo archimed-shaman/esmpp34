@@ -305,6 +305,7 @@ handle_cast(_Request, State) ->
              {stop, Reason :: term(), NewState :: #state{}}).
 
 handle_info(register, #state{dir = Direction} = State) ->
+    io:format("Direction started at pid ~p~n", [self()]),
     Res = esmpp34_manager:register_direction(Direction#smpp_entity.id),
     io:format("Direction #~p: trying to register: ~p~n",[Direction#smpp_entity.id, Res]),
     {noreply, State};

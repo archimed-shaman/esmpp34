@@ -39,7 +39,8 @@
 
 
 %% API
--export([ start_link/3 ]).
+-export([ start_link/3,
+          ask_stop/1 ]).
 
 %% gen_server callbacks
 -export([ init/1,
@@ -67,13 +68,25 @@
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Starts the server
+%% Start the server
 %% @end
 %%--------------------------------------------------------------------
 
 start_link(Host, Port, Entity) ->
     io:format("server started with args: [~p:~p] ~p~n", [Host, Port, Entity]),
     gen_server:start_link(?MODULE, [{host, Host}, {port, Port}, {connection, Entity}], []).
+
+
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Ask listener to stop
+%% @end
+%%--------------------------------------------------------------------
+
+
+ask_stop(Pid) when is_pid(Pid) ->
+    gen_server:call(Pid, ask_stop).
 
 
 
@@ -84,7 +97,7 @@ start_link(Host, Port, Entity) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Initializes the server
+%% Initialize the server
 %% @end
 %%--------------------------------------------------------------------
 
@@ -92,8 +105,8 @@ init(Args) ->
     Connection = proplists:get_value(connection, Args),
     Host = proplists:get_value(host, Args),
     Port = proplists:get_value(port, Args),
-    io:format("Listening on ~p:~p~n", [Host,Port]),
-    starter({Host, Port}, #state{host = Host, port = Port, connection = Connection}).
+    erlang:send_after(1, self(), start),
+    {ok, #state{host = Host, port = Port, connection = Connection}}.
 
 
 
@@ -103,6 +116,11 @@ init(Args) ->
 %% Handling call messages
 %% @end
 %%--------------------------------------------------------------------
+
+
+handle_call(ask_stop, _From, State) ->
+    io:format("Terminating server~n"),
+    {stop, normal, ok, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -129,6 +147,10 @@ handle_cast(_Msg, State) ->
 %% @end
 %%--------------------------------------------------------------------
 
+handle_info(start, #state{host = Host, port = Port} = State) ->
+    io:format("Listening on ~p:~p~n", [Host,Port]),
+    starter(State);
+
 handle_info(accept_if_any, #state{timer = OldTimer,
                                   listener = Socket,
                                   connection_id = ConnectionId,
@@ -153,8 +175,13 @@ handle_info(_Info, State) ->
 %% @end
 %%--------------------------------------------------------------------
 
-terminate(_Reason, #state{listener = Socket}) ->
+terminate(_Reason, #state{listener = Socket}) when Socket /= undefined ->
+    io:format("Terminating server~n"),
     gen_tcp:close(Socket),
+    ok;
+
+terminate(_Reason, _State) ->
+    io:format("Terminating server~n"),
     ok.
 
 
@@ -175,36 +202,38 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-starter({all, Port}, #state{} = State) ->
+starter(#state{host = all, port = Port} = State) ->
     io:format("Starting at all interfaces on port ~p~n", [Port]),
     Options = [binary, {packet, raw}, {active, false}, {reuseaddr, true}],
     case gen_tcp:listen(Port, Options) of
         {ok, Socket} ->
             Timer = erlang:send_after(?ACCEPT_INTERVAL, self(), accept_if_any),
-            {ok, State#state{timer = Timer, listener = Socket}};
+            {noreply, State#state{timer = Timer, listener = Socket}};
         {error, Reason} ->
             io:format("TCP Listener error start: ~p~n", [Reason]),
-            {stop, {tcp_error, Reason}}
+            {stop, {tcp_error, Reason}, State}
     end;
 
-starter ({Address, Port}, #state{} = State) ->
-    case esmpp34_utils:resolver(Address) of
-        {ok, IpAddress} ->
-            io:format("Starting at ~p:~p~n", [Address, Port]),
-            Options = [binary, {ip, IpAddress}, {packet, raw}, {active, false}, {reuseaddr, true}],
-            case gen_tcp:listen(Port, Options) of
-                {ok, Socket} ->
-                    Timer = erlang:send_after(?ACCEPT_INTERVAL, self(), accept_if_any),
-                    {ok, State#state{timer = Timer, listener = Socket}};
-                {error, Reason}->
-                    io:format("TCP Listener error start: ~p~n", [Reason]),
-                    {stop, {tcp_error, Reason}}
-            end;
-        Error ->
-            %% FIXME: maybe insecure
-            io:format("Unable determine interface: [~p], starting on all... ~n", [Error]),
-            starter({all, Port}, State)
-    end.
+%% Listen always for all interfaces. Not secure, but not so problematic in reloading.
+starter (#state{host = _Address} = State) ->
+    starter(State#state{host = all}).
+    %% case esmpp34_utils:resolver(Address) of
+    %%     {ok, IpAddress} ->
+    %%         io:format("Starting at ~p:~p~n", [Address, Port]),
+    %%         Options = [binary, {ip, IpAddress}, {packet, raw}, {active, false}, {reuseaddr, true}],
+    %%         case gen_tcp:listen(Port, Options) of
+    %%             {ok, Socket} ->
+    %%                 Timer = erlang:send_after(?ACCEPT_INTERVAL, self(), accept_if_any),
+    %%                 {ok, State#state{timer = Timer, listener = Socket}};
+    %%             {error, Reason}->
+    %%                 io:format("TCP Listener error start: ~p~n", [Reason]),
+    %%                 {stop, {tcp_error, Reason}}
+    %%         end;
+    %%     Error ->
+    %%         %% FIXME: maybe insecure
+    %%         io:format("Unable determine interface: [~p], starting on all... ~n", [Error]),
+    %%         starter({all, Port}, State)
+    %% end.
 
 
 accept_if_any(Socket, ConnectionId, Connection) ->

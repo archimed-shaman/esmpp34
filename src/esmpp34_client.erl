@@ -566,6 +566,7 @@ handle_info({tcp_closed, _Socket}, _StateName, #state{response_timers = Timers} 
     {stop, {error, tcp_closed}, State#state{response_timers = []}};
 
 handle_info({'DOWN', _MonitorRef, process, DownPid, _}, _StateName, #state{dir_pid = {Pid, _Ref}} = State) when DownPid == Pid ->
+    %% Parent direction is down, terminate
     {stop, normal, State};
 
 handle_info(enquire_link, StateName, #state{} = State) ->

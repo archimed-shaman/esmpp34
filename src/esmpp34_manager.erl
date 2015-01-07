@@ -64,7 +64,8 @@
                  config         = [],
                  pid_dict       = dict:new(),
                  direction_dict = dict:new(),
-                 status = initial }).
+                 port_dict      = dict:new(), %% <port, counter>
+                 status         = initial }).
 
 
 
@@ -74,7 +75,6 @@
 
 
 -record(dir_record, { dir                   :: #smpp_entity{},
-                      connection_pid = [],
                       pid            = null :: pid() | null }).
 
 
@@ -223,7 +223,7 @@ init(Args) ->
 handle_call(get_status, _From, #state{status = Status} = State) ->
     {reply, Status, State};
 
-handle_call({register_direction, DirId}, {From, _}, #state{direction_dict = DirDict, pid_dict = PidDict} = State) ->
+handle_call({register_direction, DirId}, {From, _}, #state{direction_dict = DirDict, pid_dict = PidDict, port_dict = PortDict} = State) ->
     %%     {reply, {error, no_direction}, State};
     case dict:find(DirId, DirDict) of
         {ok, #dir_record{dir = Entity} = DirRec} ->
@@ -232,9 +232,12 @@ handle_call({register_direction, DirId}, {From, _}, #state{direction_dict = DirD
             NewPidDic = dict:store(From, #pid_record{id = DirId, monitor_ref = MonitorRef}, PidDict),
             %% try start connections
             start_connections(Entity),
+            %% register server listeners
+            NewPortDict = inc_port_counter(PortDict, Entity),
             {reply, ok, State#state{direction_dict = NewDirDict,
-                                    pid_dict = NewPidDic }};
-        error ->
+                                    pid_dict = NewPidDic,
+                                    port_dict = NewPortDict}};
+        _ ->
             {reply, {error, no_direction}, State}
     end;
 
@@ -253,8 +256,8 @@ handle_call({register_connection, ConnectionId, Mode, RSystemId, RPassword}, {Fr
                                                                                                                          Password == RPassword ->
             Reply = esmpp34_direction:register_connection(DirPid, Mode, From),
             {reply, Reply, State};
-        {ok, #dir_record{dir = #smpp_entity{type = esme, outbind = #outbind_field{system_id = SystemId, password = Password}}, pid = DirPid}} when SystemId == RSystemId,
-                                                                                                                                                   Password == RPassword ->
+        {ok, #dir_record{dir = #smpp_entity{type = esme, outbind = #outbind_field{system_id = SystemId, password = Password}},
+                         pid = DirPid}} when SystemId == RSystemId, Password == RPassword ->
             Reply = esmpp34_direction:register_connection(DirPid, Mode, From),
             {reply, Reply, State};
         {ok, #dir_record{dir = #smpp_entity{type = smsc, system_id = SystemId}}} when SystemId == RSystemId ->
@@ -307,26 +310,19 @@ handle_cast(_Request, State) ->
              {noreply, NewState :: #state{}, timeout() | hibernate} |
              {stop, Reason :: term(), NewState :: #state{}}).
 
-handle_info({'DOWN', MonitorRef, process, DownPid, _}, #state{pid_dict = PidDict, direction_dict = DirDict} = State)->
+handle_info({'DOWN', MonitorRef, process, DownPid, _}, #state{pid_dict = PidDict, direction_dict = DirDict, port_dict = PortDict} = State)->
     case dict:find(DownPid, PidDict) of
         {ok, #pid_record{id = DirId, monitor_ref = MonitorRef}} ->
-            NewDirDict = case dict:find(DirId, DirDict) of
-                             {ok, #dir_record{connection_pid = ConnPids} = DirRec} ->
-                                 %% if direction crashed, kill all dependent connections
-
-                                 %% FIXME: connection_pid is deprecated and always empty, rewrite this
-                                 %% all client and accpeted connections will be stopped to, as they monitor the direction
-                                 %% the main problem - to shut down correctly all the listeners, as there can be only one
-                                 %% lisener for several connection. The listener should be stopped only if all other
-                                 %% directions are down
-
-                                 lists:foreach(fun(Pid) -> erlang:exit(Pid, direction_down) end, ConnPids),
-                                 dict:store(DirId, DirRec#dir_record{pid = null, connection_pid = []}, DirDict);
-                             error ->
-                                 DirDict
-                         end,
+            {NewDirDict, NewPortDict} = case dict:find(DirId, DirDict) of
+                                            {ok, #dir_record{dir = #smpp_entity{} = Entity}} ->
+                                                _PortDict = dec_port_counter(PortDict, Entity),
+                                                _DirDict = dict:update(DirId, fun(#dir_record{} = DirRec) -> DirRec#dir_record{pid = null} end, DirDict),
+                                                {_DirDict, _PortDict};
+                                            error ->
+                                                {DirDict, PortDict}
+                                        end,
             NewPidDict = dict:erase(DownPid, PidDict),
-            {noreply, State#state{pid_dict = NewPidDict, direction_dict = NewDirDict}};
+            {noreply, State#state{pid_dict = NewPidDict, direction_dict = NewDirDict, port_dict = NewPortDict}};
         error ->
             {noreply, State}
     end;
@@ -442,7 +438,8 @@ start_connections(#smpp_entity{type = smsc,
                                port = Port,
                                outbind = Outbind} = Entity) ->
     io:format("==> SMSC: ~p~n", [Modes]),
-    esmpp34_connection_sup:start_connection(server, Host, Port, Entity, all), %% one listener for all modes
+    Res = esmpp34_connection_sup:start_connection(server, Host, Port, Entity, all), %% one listener for all modes
+    io:format("Server start: ~p~n", [Res]),
     start_outbind(client, Outbind, Entity), %% FIXME: open client outbind connection only on demand
     ok.
 
@@ -474,3 +471,28 @@ filter_modes([trx | _], _) ->
     [trx];
 filter_modes([], A) ->
     lists:reverse(A).
+
+
+
+%% TODO: increment port counter for outbind connections too
+inc_port_counter(PortDict, #smpp_entity{type = smsc, port = Port}) ->
+    dict:update(Port, fun(Counter) -> Counter + 1 end, 1, PortDict);
+
+inc_port_counter(PortDict, _) ->
+    PortDict.
+
+
+
+dec_port_counter(PortDict, #smpp_entity{type = smsc, port = Port}) ->
+    case dict:find(Port, PortDict) of
+        {ok, 1} ->
+            esmpp34_connection_sup:stop_server(Port),
+            dict:erase(Port, PortDict);
+        {ok, _Counter} ->
+            dict:update(Port, fun(Counter) -> Counter - 1 end, PortDict);
+        _ ->
+            PortDict
+    end;
+
+dec_port_counter(PortDict, _) ->
+    PortDict.
